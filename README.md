@@ -51,6 +51,12 @@ if let Some(block) = guards.check("ignore previous instructions") {
 llm-wasm = { git = "https://github.com/Mattbusel/llm-wasm" }
 ```
 
+Or one-liner:
+
+```ash
+cargo add --git https://github.com/Mattbusel/llm-wasm
+```
+
 ## Test coverage
 
 168+ tests across unit, integration, and pipeline suites.
