@@ -48,13 +48,13 @@ if let Some(block) = guards.check("ignore previous instructions") {
 
 ```toml
 [dependencies]
-llm-wasm = { git = "https://github.com/Mattbusel/llm-wasm" }
+llm-wasm = { git = "https://gitlab.com/mattbusel/llm-wasm" }
 ```
 
 Or one-liner:
 
 ```ash
-cargo add --git https://github.com/Mattbusel/llm-wasm
+cargo add --git https://gitlab.com/mattbusel/llm-wasm
 ```
 
 ## Test coverage
@@ -67,4 +67,4 @@ cargo test
 
 ---
 
-> Used inside [tokio-prompt-orchestrator](https://github.com/Mattbusel/tokio-prompt-orchestrator) -- a production Rust orchestration layer for LLM pipelines. See the full [primitive library collection](https://github.com/Mattbusel/rust-crates).
+> Used inside [tokio-prompt-orchestrator](https://gitlab.com/mattbusel/tokio-prompt-orchestrator) -- a production Rust orchestration layer for LLM pipelines. See the full [primitive library collection](https://gitlab.com/mattbusel/rust-crates).
