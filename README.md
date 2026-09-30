@@ -1,6 +1,6 @@
 # llm-wasm
 
-[![CI](https://github.com/Mattbusel/llm-wasm/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattbusel/llm-wasm/actions/workflows/ci.yml)
+
 [![crates.io](https://img.shields.io/crates/v/llm-wasm.svg)](https://crates.io/crates/llm-wasm)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -111,4 +111,4 @@ MIT, see [LICENSE](LICENSE).
 
 ---
 
-Part of a set of Rust crates for LLM agents, see [rust-crates](https://github.com/Mattbusel/rust-crates).
+Part of a set of Rust crates for LLM agents, see [rust-crates](https://gitlab.com/mattbusel/rust-crates).
