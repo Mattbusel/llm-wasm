@@ -8,7 +8,7 @@
 //! ## Guarantees
 //! - `route()` always returns a non-empty string (falls back to the configured default)
 //! - Rules are evaluated in insertion order; first match wins
-//! - No I/O — purely in-memory evaluation
+//! - No I/O: purely in-memory evaluation
 
 use crate::types::ChatRequest;
 

@@ -7,7 +7,7 @@
 //! ## Guarantees
 //! - `delay_for_attempt` never returns a value exceeding `max_delay_ms`
 //! - Retry is only recommended for transient HTTP status codes
-//! - No async I/O — purely computational
+//! - No async I/O: purely computational
 
 use crate::error::LlmWasmError;
 
@@ -37,9 +37,9 @@ impl RetryPolicy {
     /// Create a custom retry policy.
     ///
     /// # Arguments
-    /// * `max_attempts` — maximum number of attempts (including the first)
-    /// * `base_delay_ms` — base delay in milliseconds for attempt 1
-    /// * `max_delay_ms` — hard ceiling on any single delay
+    /// * `max_attempts`: maximum number of attempts (including the first)
+    /// * `base_delay_ms`: base delay in milliseconds for attempt 1
+    /// * `max_delay_ms`: hard ceiling on any single delay
     ///
     /// # Errors
     /// Returns [`LlmWasmError::InvalidConfig`] if `max_attempts` is 0 or
@@ -71,13 +71,14 @@ impl RetryPolicy {
 
     /// Compute the delay in milliseconds for the given attempt number (1-indexed).
     ///
-    /// Uses a pseudo-random jitter derived from the attempt number to avoid
-    /// thundering-herd effects while remaining deterministic enough for tests.
-    /// In production WASM builds the jitter should be replaced with
-    /// `getrandom`-based randomness.
+    /// The result is the capped exponential delay scaled by a fixed factor
+    /// between 0.76 and 1.24 that depends only on the attempt number. That is
+    /// deterministic, so every client computes the same delay: use
+    /// [`delay_with_jitter`](Self::delay_with_jitter) with a random number
+    /// when many clients may retry at once.
     ///
     /// # Arguments
-    /// * `attempt` — 1-indexed attempt number
+    /// * `attempt`: 1-indexed attempt number
     ///
     /// # Returns
     /// Delay in milliseconds, capped at `max_delay_ms`.
@@ -88,18 +89,49 @@ impl RetryPolicy {
         // Truncated exponential: base * 2^(attempt-1), capped at max
         let raw = base.saturating_mul(1u64 << exp.min(30));
         let truncated = raw.min(max);
-        // Deterministic jitter in [0.75, 1.25) — multiply by (75 + attempt % 50) / 100
+        // Deterministic jitter in [0.75, 1.25): multiply by (75 + attempt % 50) / 100
         // This avoids any randomness dependency while staying within bounds.
         let jitter_num = 75u64 + u64::from(attempt % 50);
         let with_jitter = truncated.saturating_mul(jitter_num) / 100;
         with_jitter.min(max) as u32
     }
 
+    /// Delay for `attempt` with "equal jitter": half of the capped exponential
+    /// delay plus a random share of the other half. `random_unit` must be a
+    /// random number in `[0, 1)` (for example `Math.random()` in JavaScript);
+    /// values outside that range are clamped.
+    ///
+    /// Spreading retries out like this stops many clients that failed at the
+    /// same moment from all retrying at the same moment again.
+    pub fn delay_with_jitter(&self, attempt: u32, random_unit: f64) -> u32 {
+        let exp = attempt.saturating_sub(1).min(30);
+        let capped = u64::from(self.base_delay_ms)
+            .saturating_mul(1u64 << exp)
+            .min(u64::from(self.max_delay_ms));
+        let r = if random_unit.is_finite() { random_unit.clamp(0.0, 1.0) } else { 0.5 };
+        let half = capped as f64 / 2.0;
+        (half + half * r).round().min(f64::from(self.max_delay_ms)) as u32
+    }
+
+    /// Delay to wait before the next attempt, honouring the server's
+    /// `Retry-After` header when there is one.
+    ///
+    /// `retry_after` is the raw header value. Only the delta-seconds form
+    /// (`"120"`) is understood, because this crate has no clock to compare an
+    /// HTTP date against; for a date, or no header, the jittered backoff is
+    /// used. A server-requested delay is not capped by `max_delay_ms`.
+    pub fn delay_for_response(&self, attempt: u32, retry_after: Option<&str>, random_unit: f64) -> u32 {
+        match retry_after.and_then(parse_retry_after_seconds) {
+            Some(secs) => secs.saturating_mul(1000),
+            None => self.delay_with_jitter(attempt, random_unit),
+        }
+    }
+
     /// Return `true` if another attempt should be made.
     ///
     /// # Arguments
-    /// * `attempt` — the attempt that just failed (1-indexed)
-    /// * `status_code` — HTTP response status code
+    /// * `attempt`: the attempt that just failed (1-indexed)
+    /// * `status_code`: HTTP response status code
     ///
     /// Retries on: 429, 500, 502, 503, 504.
     /// Does not retry on: 400, 401, 403, 404, or any other code.
@@ -111,6 +143,16 @@ impl RetryPolicy {
     pub fn max_attempts(&self) -> u32 {
         self.max_attempts
     }
+}
+
+/// Parse the delta-seconds form of an HTTP `Retry-After` header (`"120"`).
+/// Returns `None` for an HTTP date or anything else.
+pub fn parse_retry_after_seconds(value: &str) -> Option<u32> {
+    let v = value.trim();
+    if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    v.parse::<u32>().ok()
 }
 
 #[cfg(test)]
@@ -200,5 +242,30 @@ mod tests {
         assert_eq!(p.max_attempts(), 3);
         assert_eq!(p.base_delay_ms, 100);
         assert_eq!(p.max_delay_ms, 5_000);
+    }
+
+    #[test]
+    fn test_jitter_spreads_delays() {
+        // 0.1.x had no randomness: every client waited exactly the same time.
+        let p = RetryPolicy::new(5, 1_000, 10_000).unwrap();
+        assert_eq!(p.delay_with_jitter(1, 0.0), 500);
+        assert_eq!(p.delay_with_jitter(1, 1.0), 1_000);
+        assert_eq!(p.delay_with_jitter(2, 0.5), 1_500);
+        assert_eq!(p.delay_with_jitter(10, 1.0), 10_000); // capped
+        assert_eq!(p.delay_with_jitter(1, 7.0), 1_000); // clamped
+        assert_eq!(p.delay_with_jitter(1, f64::NAN), 750);
+    }
+
+    #[test]
+    fn test_retry_after_is_honoured() {
+        let p = RetryPolicy::exponential();
+        assert_eq!(p.delay_for_response(1, Some("7"), 0.0), 7_000);
+        assert_eq!(p.delay_for_response(1, Some(" 2 "), 0.0), 2_000);
+        // HTTP-date and junk fall back to backoff.
+        assert_eq!(p.delay_for_response(1, Some("Wed, 21 Oct 2026 07:28:00 GMT"), 0.0), 50);
+        assert_eq!(p.delay_for_response(1, Some("-3"), 0.0), 50);
+        assert_eq!(p.delay_for_response(1, None, 1.0), 100);
+        assert_eq!(parse_retry_after_seconds("120"), Some(120));
+        assert_eq!(parse_retry_after_seconds(""), None);
     }
 }

@@ -1,62 +1,80 @@
-//! TTL cache implementation using wall-clock timestamps in milliseconds.
+//! TTL cache with least-recently-used eviction (via the `lru` crate).
 //!
-//! On WASM, `inserted_at_ms` would be populated from `js_sys::Date::now()`.
-//! On host targets the caller supplies the timestamp directly, keeping this
-//! module free of platform-specific dependencies.
+//! The caller supplies the current time in milliseconds on every call, so the
+//! cache needs no clock and behaves the same on host and wasm32 targets.
 
-use std::collections::HashMap;
+use std::hash::Hash;
+use std::num::NonZeroUsize;
+
+use lru::LruCache;
+
+use super::CacheKey;
 
 /// A single cached value with its insertion timestamp.
 #[derive(Debug, Clone)]
 pub struct CacheEntry {
-    /// The cached string value (e.g. serialized [`ChatResponse`]).
+    /// The cached string value (e.g. serialized [`ChatResponse`](crate::types::ChatResponse)).
     pub value: String,
     /// Unix-epoch timestamp in milliseconds at insertion time.
     pub inserted_at_ms: f64,
 }
 
-/// An in-memory TTL cache keyed by `u64` FNV-1a hashes.
+/// An in-memory cache whose entries expire `ttl_ms` milliseconds after they
+/// were stored, optionally bounded in size.
 ///
-/// Entries older than `ttl_ms` milliseconds are treated as expired.
+/// Keys default to [`CacheKey`] (a SHA-256 of model and messages, see
+/// [`cache_key`](super::cache_key)); any `Hash + Eq` type works.
 ///
 /// # Example
 /// ```rust
-/// use llm_wasm::cache::ttl::TtlCache;
+/// use llm_wasm::cache::{cache_key, TtlCache};
 /// let mut cache = TtlCache::new(5_000.0); // 5-second TTL
-/// cache.set(42, "value".into(), 0.0);
-/// assert_eq!(cache.get(42, 1_000.0), Some("value".to_string()));
+/// let key = cache_key("gpt-4o", "[]");
+/// cache.set(key, "value".into(), 0.0);
+/// assert_eq!(cache.get(&key, 1_000.0), Some("value".to_string()));
+/// assert_eq!(cache.get(&key, 6_000.0), None);
 /// ```
-pub struct TtlCache {
-    entries: HashMap<u64, CacheEntry>,
+pub struct TtlCache<K: Hash + Eq = CacheKey> {
+    entries: LruCache<K, CacheEntry>,
     /// Time-to-live in milliseconds.
     pub ttl_ms: f64,
 }
 
-impl TtlCache {
-    /// Create a new cache with the given TTL.
+impl<K: Hash + Eq> std::fmt::Debug for TtlCache<K> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TtlCache").field("len", &self.entries.len()).field("ttl_ms", &self.ttl_ms).finish()
+    }
+}
+
+impl<K: Hash + Eq> TtlCache<K> {
+    /// A cache with no size limit.
     ///
     /// # Arguments
-    /// * `ttl_ms` — maximum entry age in milliseconds before expiry
+    /// * `ttl_ms`: maximum entry age in milliseconds before expiry
     pub fn new(ttl_ms: f64) -> Self {
-        Self { entries: HashMap::new(), ttl_ms }
+        Self { entries: LruCache::unbounded(), ttl_ms }
     }
 
-    /// Retrieve a value if it exists and has not expired.
-    ///
-    /// # Arguments
-    /// * `key` — FNV-1a cache key
-    /// * `now_ms` — current time in milliseconds (caller-supplied for testability)
-    ///
-    /// # Returns
-    /// `Some(value)` if found and not expired, `None` otherwise.
-    pub fn get(&mut self, key: u64, now_ms: f64) -> Option<String> {
-        match self.entries.get(&key) {
-            Some(entry) if now_ms - entry.inserted_at_ms < self.ttl_ms => {
-                Some(entry.value.clone())
-            }
+    /// A cache that holds at most `max_entries` values. When it is full,
+    /// `set` drops the least recently used entry (`get` counts as a use).
+    /// `max_entries` of 0 is treated as 1.
+    pub fn with_capacity(ttl_ms: f64, max_entries: usize) -> Self {
+        let cap = NonZeroUsize::new(max_entries).unwrap_or(NonZeroUsize::MIN);
+        Self { entries: LruCache::new(cap), ttl_ms }
+    }
+
+    fn fresh(&self, e: &CacheEntry, now_ms: f64) -> bool {
+        now_ms - e.inserted_at_ms < self.ttl_ms
+    }
+
+    /// The value for `key` if present and not expired; expired entries are
+    /// removed on the way.
+    pub fn get(&mut self, key: &K, now_ms: f64) -> Option<String> {
+        let ttl = self.ttl_ms;
+        match self.entries.get(key) {
+            Some(e) if now_ms - e.inserted_at_ms < ttl => Some(e.value.clone()),
             Some(_) => {
-                // Expired — lazy evict
-                self.entries.remove(&key);
+                self.entries.pop(key);
                 None
             }
             None => None,
@@ -64,31 +82,34 @@ impl TtlCache {
     }
 
     /// Insert or replace a cache entry.
-    ///
-    /// # Arguments
-    /// * `key` — FNV-1a cache key
-    /// * `value` — string to cache
-    /// * `now_ms` — current time in milliseconds
-    pub fn set(&mut self, key: u64, value: String, now_ms: f64) {
-        self.entries.insert(key, CacheEntry { value, inserted_at_ms: now_ms });
+    pub fn set(&mut self, key: K, value: String, now_ms: f64) {
+        self.entries.put(key, CacheEntry { value, inserted_at_ms: now_ms });
     }
 
-    /// Remove all expired entries.
-    ///
-    /// # Arguments
-    /// * `now_ms` — current time in milliseconds
-    ///
-    /// # Returns
-    /// Number of entries removed.
+    /// Remove all expired entries. Returns how many were removed.
     pub fn purge_expired(&mut self, now_ms: f64) -> u32 {
-        let ttl = self.ttl_ms;
         let before = self.entries.len();
-        self.entries.retain(|_, e| now_ms - e.inserted_at_ms < ttl);
-        (before - self.entries.len()) as u32
+        // Drain from least to most recently used and re-insert the live
+        // entries in the same order, so recency is preserved.
+        let mut kept = LruCache::unbounded();
+        while let Some((k, e)) = self.entries.pop_lru() {
+            if self.fresh(&e, now_ms) {
+                kept.put(k, e);
+            }
+        }
+        if let Some(cap) = self.entries_cap() {
+            kept.resize(cap);
+        }
+        self.entries = kept;
+        u32::try_from(before - self.entries.len()).unwrap_or(u32::MAX)
     }
 
-    /// Return the number of entries currently in the cache (including expired ones
-    /// not yet purged).
+    fn entries_cap(&self) -> Option<NonZeroUsize> {
+        let cap = self.entries.cap();
+        (cap.get() != usize::MAX).then_some(cap)
+    }
+
+    /// Number of entries held (including expired ones not yet purged).
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -105,28 +126,28 @@ mod tests {
 
     #[test]
     fn test_ttl_cache_get_missing_returns_none() {
-        let mut cache = TtlCache::new(1_000.0);
-        assert!(cache.get(99, 0.0).is_none());
+        let mut cache: TtlCache<u64> = TtlCache::new(1_000.0);
+        assert!(cache.get(&99, 0.0).is_none());
     }
 
     #[test]
     fn test_ttl_cache_set_and_get_returns_value() {
         let mut cache = TtlCache::new(1_000.0);
         cache.set(1, "hello".into(), 0.0);
-        assert_eq!(cache.get(1, 500.0), Some("hello".into()));
+        assert_eq!(cache.get(&1, 500.0), Some("hello".into()));
     }
 
     #[test]
     fn test_ttl_cache_expired_returns_none() {
         let mut cache = TtlCache::new(1_000.0);
         cache.set(1, "val".into(), 0.0);
-        // Now at 1001ms — beyond TTL
-        assert!(cache.get(1, 1_001.0).is_none());
+        // Now at 1001ms: beyond TTL
+        assert!(cache.get(&1, 1_001.0).is_none());
     }
 
     #[test]
     fn test_ttl_cache_len_tracks_entries() {
-        let mut cache = TtlCache::new(5_000.0);
+        let mut cache: TtlCache<u64> = TtlCache::new(5_000.0);
         assert_eq!(cache.len(), 0);
         cache.set(1, "a".into(), 0.0);
         cache.set(2, "b".into(), 0.0);
@@ -147,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_ttl_cache_is_empty_initially() {
-        let cache = TtlCache::new(1_000.0);
+        let cache: TtlCache<u64> = TtlCache::new(1_000.0);
         assert!(cache.is_empty());
     }
 
@@ -157,6 +178,56 @@ mod tests {
         cache.set(1, "old".into(), 0.0);
         cache.set(1, "new".into(), 500.0);
         // At t=1100, original insertion (0ms) would have expired but updated one (500ms) hasn't
-        assert_eq!(cache.get(1, 1_100.0), Some("new".into()));
+        assert_eq!(cache.get(&1, 1_100.0), Some("new".into()));
+    }
+
+    #[test]
+    fn test_capacity_evicts_oldest() {
+        let mut cache = TtlCache::with_capacity(10_000.0, 2);
+        cache.set(1, "a".into(), 0.0);
+        cache.set(2, "b".into(), 1.0);
+        cache.set(3, "c".into(), 2.0);
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get(&1, 3.0).is_none());
+        assert_eq!(cache.get(&3, 3.0), Some("c".into()));
+        // Overwriting an existing key does not evict anything.
+        cache.set(2, "b2".into(), 4.0);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get(&3, 5.0), Some("c".into()));
+    }
+
+    #[test]
+    fn test_capacity_prefers_dropping_expired() {
+        let mut cache = TtlCache::with_capacity(100.0, 2);
+        cache.set(1, "old".into(), 0.0);
+        cache.set(2, "fresh".into(), 150.0);
+        cache.set(3, "new".into(), 160.0); // key 1 expired at 100
+        assert_eq!(cache.get(&2, 170.0), Some("fresh".into()));
+        assert_eq!(cache.get(&3, 170.0), Some("new".into()));
+    }
+
+    #[test]
+    fn test_lru_keeps_recently_read_entries() {
+        // 0.2.0-dev evicted the oldest insert even if it was read constantly.
+        let mut cache = TtlCache::with_capacity(10_000.0, 2);
+        cache.set(1u64, "hot".into(), 0.0);
+        cache.set(2, "cold".into(), 1.0);
+        assert!(cache.get(&1, 2.0).is_some()); // 1 is now most recently used
+        cache.set(3, "new".into(), 3.0);
+        assert_eq!(cache.get(&1, 4.0), Some("hot".into()));
+        assert!(cache.get(&2, 4.0).is_none());
+    }
+
+    #[test]
+    fn test_purge_keeps_capacity_and_order() {
+        let mut cache = TtlCache::with_capacity(100.0, 3);
+        cache.set(1u64, "a".into(), 0.0);
+        cache.set(2, "b".into(), 90.0);
+        cache.set(3, "c".into(), 95.0);
+        assert_eq!(cache.purge_expired(150.0), 1);
+        cache.set(4, "d".into(), 150.0);
+        cache.set(5, "e".into(), 151.0); // evicts 2, the least recently used
+        assert!(cache.get(&2, 152.0).is_none());
+        assert_eq!(cache.len(), 3);
     }
 }

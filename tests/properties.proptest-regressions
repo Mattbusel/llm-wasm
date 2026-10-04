@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc aab4b5d70e7140dc166482de71c9f67584867cfcee3bdff833061bbcba44d392 # shrinks to v = Array [Object {}], prose = ""
+cc 0a2ec4f2164d76d913767421c96b4796ef89b964e446a08b6d6ca5f4cc1f6b97 # shrinks to s = "{:¡\t\0'\\¡"

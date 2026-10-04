@@ -1,7 +1,16 @@
 [package]
 name = "llm-wasm"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+description = "LLM call logic for WebAssembly and native: real model prices and cost ledger, retry with jitter and Retry-After, guards, routing, cache, templates, JSON extraction, optional JS bindings"
+readme = "README.md"
+repository = "https://gitlab.com/mattbusel/llm-wasm"
+documentation = "https://docs.rs/llm-wasm"
+keywords = ["llm", "wasm", "openai", "anthropic", "cost"]
+categories = ["wasm", "web-programming", "api-bindings"]
+include = ["src/**/*.rs", "benches/**/*.rs", "examples/**/*.rs", "examples/**/*.mjs", "scripts/update_prices.py", "Cargo.toml", "README.md", "CHANGELOG.md", "LICENSE"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -12,14 +21,64 @@ expect_used = "deny"
 panic = "deny"
 todo = "deny"
 
+[features]
+default = []
+## JavaScript bindings via wasm-bindgen (estimateCost, extractJson, renderTemplate, Ledger, Retry, Cache, StreamDecoder, ...).
+js = ["dep:wasm-bindgen", "dep:serde-wasm-bindgen"]
+## Decode streamed (SSE) responses from OpenAI, Anthropic and compatible APIs (sse-core).
+stream = ["dep:sse-core", "dep:bytes"]
+## Repair almost-JSON from models: trailing commas, single quotes, Python literals, cut-off output (json5).
+repair = ["dep:json5"]
+## Jinja templates and Hugging Face chat templates (minijinja).
+jinja = ["dep:minijinja", "dep:minijinja-contrib"]
+## SecretGuard: block or redact API keys, emails and card numbers before they leave (regex).
+secrets = ["dep:regex"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
+# collision-resistant cache keys, and an LRU bound for the cache
+sha2 = { version = "0.11", default-features = false }
+lru = { version = "0.18", default-features = false }
+# feature "js"
+wasm-bindgen = { version = "0.2.100", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+# feature "stream"
+sse-core = { version = "0.2", default-features = false, features = ["std"], optional = true }
+bytes = { version = "1", optional = true }
+# feature "repair"
+json5 = { version = "1.3", optional = true }
+# feature "jinja"
+minijinja = { version = "2", default-features = false, features = ["builtins", "serde", "std_collections", "macros", "multi_template", "json", "loop_controls", "fuel"], optional = true }
+minijinja-contrib = { version = "2", default-features = false, features = ["pycompat"], optional = true }
+# feature "secrets"
+regex = { version = "1", default-features = false, features = ["std"], optional = true }
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
-js-sys = "0.3"
-wasm-bindgen-futures = "0.4"
-serde-wasm-bindgen = "0.6"
-getrandom = { version = "0.2", features = ["js"] }
+[dev-dependencies]
+proptest = "1"
+criterion = "0.5"
+llm_wasm_011 = { package = "llm-wasm", version = "=0.1.1" }
+
+[[bench]]
+name = "vs_alternatives"
+harness = false
+
+[[example]]
+name = "quickstart"
+
+[[example]]
+name = "stream_decode"
+required-features = ["stream"]
+
+[[example]]
+name = "chat_template"
+required-features = ["jinja", "secrets"]
+
+[[example]]
+name = "repair_json"
+required-features = ["repair"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

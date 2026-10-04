@@ -7,7 +7,7 @@
 //! ## Guarantees
 //! - `GuardChain::check` stops at the first `Block` result
 //! - `GuardChain::check` returns `Ok(None)` if every guard allows the request
-//! - No I/O — all evaluation is in-memory
+//! - No I/O: all evaluation is in-memory
 
 use crate::error::LlmWasmError;
 use crate::types::ChatRequest;
@@ -36,25 +36,52 @@ pub trait Guard {
 
 /// Rejects requests whose messages contain any blocklisted term.
 ///
-/// Matching is case-insensitive substring search.
+/// Matching is case-insensitive (Unicode lowercase). By default a term matches
+/// anywhere, so `"ass"` also blocks `"class"`; build the guard with
+/// [`ContentGuard::whole_words`] to match whole words only.
 ///
 /// # Example
 /// ```rust
 /// use llm_wasm::guard::{ContentGuard, Guard, GuardResult};
 /// use llm_wasm::types::{ChatRequest, ChatMessage, Role};
 ///
-/// let guard = ContentGuard::new(vec!["spam".into()]);
-/// let req = ChatRequest::new("m", vec![ChatMessage::new(Role::User, "buy spam now")]);
+/// let guard = ContentGuard::whole_words(vec!["spam".into()]);
+/// let req = ChatRequest::new("m", vec![ChatMessage::new(Role::User, "buy SPAM now")]);
 /// assert!(matches!(guard.check(&req), GuardResult::Block { .. }));
+/// let ok = ChatRequest::new("m", vec![ChatMessage::new(Role::User, "spammer list")]);
+/// assert!(matches!(guard.check(&ok), GuardResult::Allow));
 /// ```
 pub struct ContentGuard {
     blocklist: Vec<String>,
+    lowered: Vec<String>,
+    whole_words: bool,
 }
 
 impl ContentGuard {
-    /// Create a guard with the given blocklist terms.
+    /// Create a guard that blocks messages containing any term, anywhere.
     pub fn new(blocklist: Vec<String>) -> Self {
-        Self { blocklist }
+        let lowered = blocklist.iter().map(|t| t.to_lowercase()).collect();
+        Self { blocklist, lowered, whole_words: false }
+    }
+
+    /// Create a guard that blocks only whole-word (or whole-phrase) matches:
+    /// the characters on each side of the match must not be letters or digits.
+    pub fn whole_words(blocklist: Vec<String>) -> Self {
+        Self { whole_words: true, ..Self::new(blocklist) }
+    }
+
+    fn matches(&self, lower_text: &str, term: &str) -> bool {
+        if term.is_empty() {
+            return false;
+        }
+        if !self.whole_words {
+            return lower_text.contains(term);
+        }
+        lower_text.match_indices(term).any(|(i, m)| {
+            let before = lower_text[..i].chars().next_back();
+            let after = lower_text[i + m.len()..].chars().next();
+            !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+        })
     }
 }
 
@@ -66,8 +93,8 @@ impl Guard for ContentGuard {
     fn check(&self, request: &ChatRequest) -> GuardResult {
         for message in &request.messages {
             let lower = message.content.to_lowercase();
-            for term in &self.blocklist {
-                if lower.contains(term.to_lowercase().as_str()) {
+            for (term, low) in self.blocklist.iter().zip(&self.lowered) {
+                if self.matches(&lower, low) {
                     return GuardResult::Block {
                         reason: format!("message contains blocked term '{term}'"),
                     };
@@ -106,7 +133,7 @@ impl Guard for LengthGuard {
     }
 
     fn check(&self, request: &ChatRequest) -> GuardResult {
-        let total: usize = request.messages.iter().map(|m| m.content.len()).sum();
+        let total: usize = request.messages.iter().map(|m| m.content.chars().count()).sum();
         if total > self.max_total_chars {
             GuardResult::Block {
                 reason: format!(
@@ -159,9 +186,9 @@ impl GuardChain {
     /// Run all guards in order against `request`.
     ///
     /// # Returns
-    /// - `Ok(None)` — every guard allowed the request
-    /// - `Ok(Some(modified))` — a guard returned a `Modify` result
-    /// - `Err(LlmWasmError::GuardBlocked)` — a guard blocked the request
+    /// - `Ok(None)`: every guard allowed the request
+    /// - `Ok(Some(modified))`: a guard returned a `Modify` result
+    /// - `Err(LlmWasmError::GuardBlocked)`: a guard blocked the request
     ///
     /// Stops at the first `Block` or `Modify` result.
     ///
@@ -268,5 +295,32 @@ mod tests {
         let chain = GuardChain::new().add(LengthGuard::new(2));
         let result = chain.check(&req("too long"));
         assert!(matches!(result, Err(LlmWasmError::GuardBlocked { .. })));
+    }
+
+    #[test]
+    fn test_length_guard_counts_characters_not_bytes() {
+        // 0.1.x summed byte lengths, so 10 accented characters (20 bytes)
+        // were blocked by a 10-character limit.
+        let req = ChatRequest::new("m", vec![ChatMessage::new(Role::User, "\u{e9}".repeat(10))]);
+        assert!(matches!(LengthGuard::new(10).check(&req), GuardResult::Allow));
+        assert!(matches!(LengthGuard::new(9).check(&req), GuardResult::Block { .. }));
+    }
+
+    #[test]
+    fn test_whole_words_avoids_scunthorpe_problem() {
+        let g = ContentGuard::whole_words(vec!["ass".into(), "credit card".into(), "café".into()]);
+        let check = |t: &str| matches!(g.check(&ChatRequest::new("m", vec![ChatMessage::new(Role::User, t)])), GuardResult::Block { .. });
+        assert!(!check("this class is about assessment"));
+        assert!(check("what an ASS."));
+        assert!(check("my Credit Card number"));
+        assert!(!check("creditcard"));
+        assert!(check("Le CAFÉ, s'il vous plaît")); // Unicode lowercase
+        assert!(!check("cafés")); // followed by a letter
+        // the substring guard still matches inside words, as before
+        let sub = ContentGuard::new(vec!["ass".into()]);
+        assert!(matches!(sub.check(&ChatRequest::new("m", vec![ChatMessage::new(Role::User, "class")])), GuardResult::Block { .. }));
+        // an empty term never matches
+        let empty = ContentGuard::new(vec![String::new()]);
+        assert!(matches!(empty.check(&ChatRequest::new("m", vec![ChatMessage::new(Role::User, "x")])), GuardResult::Allow));
     }
 }

@@ -64,13 +64,13 @@ fn cache_key_deterministic_across_calls() {
 fn ttl_cache_basic_set_get() {
     let mut cache = TtlCache::new(1000.0);
     cache.set(1, "value".into(), 0.0);
-    assert_eq!(cache.get(1, 500.0), Some("value".into()));
+    assert_eq!(cache.get(&1u64, 500.0), Some("value".into()));
 }
 
 #[test]
 fn ttl_cache_miss_returns_none() {
     let mut cache = TtlCache::new(1000.0);
-    assert!(cache.get(99, 0.0).is_none());
+    assert!(cache.get(&99u64, 0.0).is_none());
 }
 
 #[test]
@@ -78,21 +78,21 @@ fn ttl_cache_exact_ttl_boundary_is_expired() {
     let mut cache = TtlCache::new(1000.0);
     cache.set(1, "v".into(), 0.0);
     // At exactly ttl_ms the condition is `now - inserted < ttl`, so 1000 < 1000 = false → expired
-    assert!(cache.get(1, 1000.0).is_none());
+    assert!(cache.get(&1u64, 1000.0).is_none());
 }
 
 #[test]
 fn ttl_cache_just_under_ttl_is_fresh() {
     let mut cache = TtlCache::new(1000.0);
     cache.set(1, "v".into(), 0.0);
-    assert_eq!(cache.get(1, 999.0), Some("v".into()));
+    assert_eq!(cache.get(&1u64, 999.0), Some("v".into()));
 }
 
 #[test]
 fn ttl_cache_expired_removes_entry() {
     let mut cache = TtlCache::new(500.0);
     cache.set(1, "v".into(), 0.0);
-    cache.get(1, 600.0); // triggers lazy eviction
+    cache.get(&1u64, 600.0); // triggers lazy eviction
     assert_eq!(cache.len(), 0);
 }
 
@@ -102,8 +102,8 @@ fn ttl_cache_multiple_entries_independent_ttls() {
     cache.set(1, "early".into(), 0.0);
     cache.set(2, "late".into(), 800.0);
     // At t=1100: key 1 expired, key 2 still fresh (1100-800=300 < 1000)
-    assert!(cache.get(1, 1100.0).is_none());
-    assert_eq!(cache.get(2, 1100.0), Some("late".into()));
+    assert!(cache.get(&1u64, 1100.0).is_none());
+    assert_eq!(cache.get(&2u64, 1100.0), Some("late".into()));
 }
 
 #[test]
@@ -112,9 +112,9 @@ fn ttl_cache_overwrite_refreshes_timestamp() {
     cache.set(1, "old".into(), 0.0);
     cache.set(1, "new".into(), 400.0); // re-insert at t=400
     // At t=600: 600-400=200 < 500 → fresh
-    assert_eq!(cache.get(1, 600.0), Some("new".into()));
+    assert_eq!(cache.get(&1u64, 600.0), Some("new".into()));
     // At t=901: 901-400=501 > 500 → expired
-    assert!(cache.get(1, 901.0).is_none());
+    assert!(cache.get(&1u64, 901.0).is_none());
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn ttl_cache_purge_expired_removes_correct_count() {
 
 #[test]
 fn ttl_cache_purge_on_empty_is_zero() {
-    let mut cache = TtlCache::new(1000.0);
+    let mut cache: TtlCache<u64> = TtlCache::new(1000.0);
     assert_eq!(cache.purge_expired(99999.0), 0);
 }
 
@@ -215,16 +215,16 @@ fn cached_response_skips_retry_simulation() {
     let key = cache_key("gpt-4o", "[{\"role\":\"user\",\"content\":\"hello\"}]");
 
     // Simulate: first request misses cache, retry on 503
-    assert!(cache.get(key, 0.0).is_none());
+    assert!(cache.get(&key, 0.0).is_none());
     assert!(policy.should_retry(1, 503));
     assert!(policy.should_retry(2, 503));
     assert!(!policy.should_retry(3, 503)); // exhausted
 
-    // Success on 3rd attempt — store in cache
+    // Success on 3rd attempt: store in cache
     cache.set(key, "{\"content\":\"Hi there!\"}".into(), 1000.0);
 
     // Second request hits cache
-    let cached = cache.get(key, 2000.0);
+    let cached = cache.get(&key, 2000.0);
     assert!(cached.is_some());
     assert!(cached.unwrap().contains("Hi there"));
 }
@@ -242,7 +242,7 @@ fn cache_stores_multiple_model_responses() {
 
     for (i, model) in models.iter().enumerate() {
         let key = cache_key(model, msg);
-        let v = cache.get(key, 5000.0).unwrap();
+        let v = cache.get(&key, 5000.0).unwrap();
         assert_eq!(v, format!("response_{}", i));
     }
 }

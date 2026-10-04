@@ -14,20 +14,38 @@ pub enum LlmWasmError {
     Serialization(String),
 
     /// A configuration field contains an invalid value.
-    #[error("Invalid configuration: {field} — {reason}")]
-    InvalidConfig { field: String, reason: String },
+    #[error("Invalid configuration: {field}: {reason}")]
+    InvalidConfig {
+        /// Which setting.
+        field: String,
+        /// What is wrong with it.
+        reason: String,
+    },
 
     /// A guard rejected the request.
     #[error("Request blocked by guard '{guard}': {reason}")]
-    GuardBlocked { guard: String, reason: String },
+    GuardBlocked {
+        /// Name of the guard that blocked.
+        guard: String,
+        /// What is wrong with it.
+        reason: String,
+    },
 
     /// All retry attempts were consumed without success.
     #[error("Retry budget exhausted after {attempts} attempts")]
-    RetryExhausted { attempts: u32 },
+    RetryExhausted {
+        /// How many attempts were made.
+        attempts: u32,
+    },
 
     /// The accumulated cost exceeded the configured budget.
     #[error("Cost budget exceeded: used ${used:.4}, limit ${limit:.4}")]
-    BudgetExceeded { used: f64, limit: f64 },
+    BudgetExceeded {
+        /// Total in USD the request would have reached.
+        used: f64,
+        /// The budget in USD.
+        limit: f64,
+    },
 
     /// A template could not be rendered.
     #[error("Template render error: {0}")]

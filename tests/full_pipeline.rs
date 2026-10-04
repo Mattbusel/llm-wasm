@@ -92,7 +92,7 @@ fn cost_ledger_records_accumulate() {
 #[test]
 fn cost_ledger_no_budget_never_exceeds() {
     let mut ledger = CostLedger::new();
-    // Record a huge amount — should never "exceed" since no budget
+    // Record a huge amount: should never "exceed" since no budget
     ledger.record("claude-opus-4-6", 100_000_000, 100_000_000).unwrap();
     assert!(!ledger.exceeded_budget());
 }
@@ -432,7 +432,7 @@ fn pipeline_guard_blocks_before_routing() {
         ChatMessage::new(Role::User, "this is forbidden content"),
     ]);
 
-    // Guard blocks — routing never reached
+    // Guard blocks: routing never reached
     let result = chain.check(&req);
     assert!(result.is_err());
 }

@@ -1,19 +1,32 @@
 //! # Module: Cost
 //!
-//! ## Responsibility
-//! Track accumulated token spend against a USD budget using a static pricing
-//! table. No network calls — all prices are hardcoded.
+//! Track token spend in US dollars against an optional budget.
 //!
-//! ## Guarantees
-//! - `total_usd()` is always non-negative
-//! - `record()` returns an error for unknown models rather than silently
-//!   ignoring them
-//! - `exceeded_budget()` is accurate after every `record()` call
+//! Prices come from a table compiled into the crate, generated from LiteLLM's
+//! maintained `model_prices_and_context_window.json` (MIT license) by
+//! `scripts/update_prices.py`: 232 chat models from OpenAI, Anthropic, Google
+//! Gemini, Mistral, DeepSeek and xAI. [`PRICES_SNAPSHOT_DATE`] says when it was
+//! generated. No network calls; the lookup is a binary search over a static
+//! array, so it costs nothing at startup in a WASM module.
+//!
+//! ```rust
+//! use llm_wasm::cost::pricing_for_model;
+//! let p = pricing_for_model("gpt-4o-mini").unwrap();
+//! assert_eq!(p.input_per_million, 0.15);
+//! assert!(pricing_for_model("openai/gpt-4o").is_ok()); // provider prefix is accepted
+//! ```
 
 use crate::error::LlmWasmError;
 
+#[path = "../prices_data.rs"]
+#[allow(dead_code)]
+mod data;
+
+/// Date the built-in price table was generated (YYYY-MM-DD).
+pub const PRICES_SNAPSHOT_DATE: &str = data::SNAPSHOT_DATE;
+
 /// USD per-million-token pricing for one model.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModelPricing {
     /// Cost per 1 000 000 input tokens, in USD.
     pub input_per_million: f64,
@@ -30,53 +43,34 @@ impl ModelPricing {
     }
 }
 
-/// Look up pricing for a known model.
-///
-/// # Arguments
-/// * `model` — model identifier string
-///
-/// # Returns
-/// `Ok(ModelPricing)` for known models, `Err(LlmWasmError::InvalidConfig)` otherwise.
-///
-/// # Panics
-/// This function never panics.
-pub fn pricing_for_model(model: &str) -> Result<ModelPricing, LlmWasmError> {
-    match model {
-        "claude-opus-4-6" => Ok(ModelPricing {
-            input_per_million: 15.00,
-            output_per_million: 75.00,
-        }),
-        "claude-sonnet-4-6" => Ok(ModelPricing {
-            input_per_million: 3.00,
-            output_per_million: 15.00,
-        }),
-        "claude-haiku-4-5-20251001" => Ok(ModelPricing {
-            input_per_million: 0.80,
-            output_per_million: 4.00,
-        }),
-        "gpt-4o" => Ok(ModelPricing {
-            input_per_million: 2.50,
-            output_per_million: 10.00,
-        }),
-        "gpt-4o-mini" => Ok(ModelPricing {
-            input_per_million: 0.15,
-            output_per_million: 0.60,
-        }),
-        other => Err(LlmWasmError::InvalidConfig {
-            field: "model".into(),
-            reason: format!("unknown model '{other}' — no pricing data available"),
-        }),
-    }
+fn lookup(model: &str) -> Option<ModelPricing> {
+    let rows = data::ROWS;
+    let find = |name: &str| {
+        rows.binary_search_by(|row| row.0.cmp(name)).ok().map(|i| ModelPricing {
+            input_per_million: rows[i].2,
+            output_per_million: rows[i].3,
+        })
+    };
+    find(model).or_else(|| model.split_once('/').and_then(|(_, bare)| find(bare)))
 }
 
-/// A single cost accounting entry.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct CostEntry {
-    model: String,
-    input_tokens: u32,
-    output_tokens: u32,
-    cost_usd: f64,
+/// Look up pricing for a model in the built-in table.
+///
+/// Accepts the provider's model name (`gpt-4o`, `claude-sonnet-4-5`) or the
+/// same name with a `provider/` prefix.
+///
+/// # Errors
+/// [`LlmWasmError::InvalidConfig`] if the model is not in the table.
+pub fn pricing_for_model(model: &str) -> Result<ModelPricing, LlmWasmError> {
+    lookup(model).ok_or_else(|| LlmWasmError::InvalidConfig {
+        field: "model".into(),
+        reason: format!("unknown model '{model}': no pricing data available"),
+    })
+}
+
+/// Names of every model in the built-in price table, sorted.
+pub fn known_models() -> impl Iterator<Item = &'static str> {
+    data::ROWS.iter().map(|row| row.0)
 }
 
 /// Accumulates per-request costs and enforces an optional USD budget.
@@ -88,72 +82,70 @@ struct CostEntry {
 /// ledger.record("gpt-4o-mini", 1_000, 500).unwrap();
 /// assert!(!ledger.exceeded_budget());
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CostLedger {
-    entries: Vec<CostEntry>,
+    total_usd: f64,
+    entries: u32,
     budget_usd: Option<f64>,
-}
-
-impl Default for CostLedger {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl CostLedger {
     /// Create an unbounded ledger (no budget limit).
     pub fn new() -> Self {
-        Self { entries: Vec::new(), budget_usd: None }
+        Self::default()
     }
 
     /// Create a ledger with a USD budget ceiling.
     ///
     /// # Arguments
-    /// * `budget_usd` — maximum allowed spend in USD
+    /// * `budget_usd`: maximum allowed spend in USD
     pub fn with_budget(budget_usd: f64) -> Self {
-        Self { entries: Vec::new(), budget_usd: Some(budget_usd) }
+        Self { budget_usd: Some(budget_usd), ..Self::default() }
     }
 
     /// Record a completed request and its token usage.
     ///
-    /// # Arguments
-    /// * `model` — model identifier; must be in the known pricing table
-    /// * `input_tokens` — number of prompt tokens
-    /// * `output_tokens` — number of completion tokens
-    ///
     /// # Errors
     /// Returns [`LlmWasmError::InvalidConfig`] for unknown models.
     /// Returns [`LlmWasmError::BudgetExceeded`] if recording this usage would
-    /// push total spend over the budget.
-    pub fn record(
-        &mut self,
-        model: &str,
-        input_tokens: u32,
-        output_tokens: u32,
-    ) -> Result<(), LlmWasmError> {
-        let pricing = pricing_for_model(model)?;
-        let cost_usd = pricing.cost_usd(input_tokens, output_tokens);
-        let new_total = self.total_usd() + cost_usd;
+    /// push total spend over the budget (nothing is recorded in that case).
+    pub fn record(&mut self, model: &str, input_tokens: u32, output_tokens: u32) -> Result<f64, LlmWasmError> {
+        let cost = pricing_for_model(model)?.cost_usd(input_tokens, output_tokens);
+        self.record_usd(cost)
+    }
+
+    /// Record a cost you already know in USD (for example one your provider
+    /// reported, or a model missing from the table). Returns the new total.
+    ///
+    /// # Errors
+    /// [`LlmWasmError::InvalidConfig`] for a negative or non-finite amount,
+    /// [`LlmWasmError::BudgetExceeded`] if it would cross the budget.
+    pub fn record_usd(&mut self, cost_usd: f64) -> Result<f64, LlmWasmError> {
+        if !cost_usd.is_finite() || cost_usd < 0.0 {
+            return Err(LlmWasmError::InvalidConfig {
+                field: "cost_usd".into(),
+                reason: format!("must be a non-negative number, got {cost_usd}"),
+            });
+        }
+        let new_total = self.total_usd + cost_usd;
         if let Some(budget) = self.budget_usd {
             if new_total > budget {
-                return Err(LlmWasmError::BudgetExceeded {
-                    used: new_total,
-                    limit: budget,
-                });
+                return Err(LlmWasmError::BudgetExceeded { used: new_total, limit: budget });
             }
         }
-        self.entries.push(CostEntry {
-            model: model.to_string(),
-            input_tokens,
-            output_tokens,
-            cost_usd,
-        });
-        Ok(())
+        self.total_usd = new_total;
+        self.entries = self.entries.saturating_add(1);
+        Ok(new_total)
     }
 
     /// Return the sum of all recorded costs in USD.
     pub fn total_usd(&self) -> f64 {
-        self.entries.iter().map(|e| e.cost_usd).sum()
+        self.total_usd
+    }
+
+    /// Budget left in USD, or `None` when no budget was set.
+    pub fn remaining_usd(&self) -> Option<f64> {
+        self.budget_usd.map(|b| (b - self.total_usd).max(0.0))
     }
 
     /// Return `true` if the total spend exceeds the configured budget.
@@ -161,14 +153,14 @@ impl CostLedger {
     /// Always `false` when no budget was set.
     pub fn exceeded_budget(&self) -> bool {
         match self.budget_usd {
-            Some(budget) => self.total_usd() > budget,
+            Some(budget) => self.total_usd > budget,
             None => false,
         }
     }
 
     /// Number of recorded entries.
     pub fn entry_count(&self) -> u32 {
-        self.entries.len() as u32
+        self.entries
     }
 }
 
@@ -258,5 +250,45 @@ mod tests {
         let p = ModelPricing { input_per_million: 3.0, output_per_million: 15.0 };
         let cost = p.cost_usd(1_000_000, 1_000_000);
         assert!((cost - 18.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_prices_match_published_rates() {
+        // 0.1.x listed claude-opus-4-6 at $15/$75 and claude-haiku-4-5 at
+        // $0.80/$4 per million tokens; Anthropic's prices are $5/$25 and $1/$5.
+        let opus = pricing_for_model("claude-opus-4-6").unwrap();
+        assert_eq!((opus.input_per_million, opus.output_per_million), (5.0, 25.0));
+        let haiku = pricing_for_model("claude-haiku-4-5-20251001").unwrap();
+        assert_eq!((haiku.input_per_million, haiku.output_per_million), (1.0, 5.0));
+        let gpt = pricing_for_model("gpt-4o").unwrap();
+        assert_eq!((gpt.input_per_million, gpt.output_per_million), (2.5, 10.0));
+    }
+
+    #[test]
+    fn test_table_is_sorted_and_large() {
+        let names: Vec<&str> = known_models().collect();
+        assert!(names.len() > 100);
+        assert!(names.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(PRICES_SNAPSHOT_DATE.len(), 10);
+    }
+
+    #[test]
+    fn test_provider_prefix_and_other_vendors() {
+        assert_eq!(pricing_for_model("anthropic/claude-sonnet-4-5").unwrap(), pricing_for_model("claude-sonnet-4-5").unwrap());
+        assert!(known_models().any(|m| m.starts_with("gemini-")));
+        assert!(known_models().any(|m| m.starts_with("mistral-")));
+        assert!(pricing_for_model("nobody/nothing").is_err());
+    }
+
+    #[test]
+    fn test_record_usd_and_remaining() {
+        let mut ledger = CostLedger::with_budget(1.0);
+        assert!((ledger.record_usd(0.4).unwrap() - 0.4).abs() < 1e-12);
+        assert!(ledger.record_usd(-1.0).is_err());
+        assert!(ledger.record_usd(f64::NAN).is_err());
+        assert!(matches!(ledger.record_usd(0.7), Err(LlmWasmError::BudgetExceeded { .. })));
+        assert!((ledger.remaining_usd().unwrap() - 0.6).abs() < 1e-12);
+        assert_eq!(ledger.entry_count(), 1);
+        assert_eq!(CostLedger::new().remaining_usd(), None);
     }
 }
