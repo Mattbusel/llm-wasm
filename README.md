@@ -1,5 +1,13 @@
 # llm-wasm
 
+<!-- outcome-block -->
+**Cost tracking, retries, model routing, stream parsing and JSON repair for LLM calls, running unchanged in a browser, an edge worker or a normal program.**
+
+**Why this over the alternatives:** SDKs need Tokio and an HTTP client. This does no I/O and reads no clock, so it builds for `wasm32-unknown-unknown` as is, with JavaScript bindings.
+
+**Guarantee:** if it doesn't do what this README says, [open an issue](https://github.com/Mattbusel/llm-wasm/issues) and I'll fix it.
+<!-- outcome-block -->
+
 The bookkeeping around an LLM API call (what it costs, whether to retry, whether to block it, which model to use, how to read a streamed answer, how to pull JSON out of it) as plain Rust that runs the same in a browser, an edge worker or a normal program.
 
 [![crates.io](https://img.shields.io/crates/v/llm-wasm.svg)](https://crates.io/crates/llm-wasm)
