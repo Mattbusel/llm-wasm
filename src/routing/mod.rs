@@ -13,7 +13,11 @@
 use crate::types::ChatRequest;
 
 /// A condition that must hold for a routing rule to fire.
+///
+/// `#[non_exhaustive]` since 0.3, so new conditions can be added in a minor
+/// release; a `match` on it needs a `_` arm.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub enum RoutingCondition {
     /// Always matches.
     Always,
@@ -68,6 +72,7 @@ impl RoutingRule {
 /// let req = llm_wasm::types::ChatRequest::new("gpt-4o", vec![]);
 /// assert_eq!(router.route(&req), "claude-sonnet-4-6");
 /// ```
+#[derive(Debug, Clone)]
 pub struct Router {
     rules: Vec<RoutingRule>,
     fallback: String,

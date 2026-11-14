@@ -7,7 +7,10 @@
 ///
 /// # Variants
 /// Each variant covers a distinct failure domain so callers can match precisely.
+/// Marked `#[non_exhaustive]` since 0.3: a `match` needs a `_` arm, and new
+/// variants can arrive in minor releases.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum LlmWasmError {
     /// A value could not be serialized or deserialized.
     #[error("Serialization error: {0}")]
@@ -58,6 +61,28 @@ pub enum LlmWasmError {
     /// A cache operation failed.
     #[error("Cache error: {0}")]
     CacheError(String),
+
+    /// The model is not in the built-in price table. Not worth retrying:
+    /// record its cost with `CostLedger::record_usd` or price it with
+    /// `ModelPricing::new`.
+    #[error("Unknown model '{0}': no pricing data available")]
+    UnknownModel(String),
+
+    /// The provider reported an error (for example an `error` event inside a
+    /// streamed response). Unlike [`LlmWasmError::InvalidConfig`], this is
+    /// about the provider's side; `kind` says whether a retry makes sense.
+    #[error("Provider error{}: {message}", kind_suffix(.kind))]
+    Provider {
+        /// The provider's error type or code, when it sent one
+        /// (`"overloaded_error"`, `"rate_limit_exceeded"`, ...).
+        kind: Option<String>,
+        /// The provider's message.
+        message: String,
+    },
+}
+
+fn kind_suffix(kind: &Option<String>) -> String {
+    kind.as_deref().map(|k| format!(" ({k})")).unwrap_or_default()
 }
 
 impl From<serde_json::Error> for LlmWasmError {
@@ -128,6 +153,18 @@ mod tests {
     fn test_cache_error_display() {
         let e = LlmWasmError::CacheError("expired".into());
         assert!(e.to_string().contains("expired"));
+    }
+
+    #[test]
+    fn test_unknown_model_and_provider_display() {
+        assert_eq!(
+            LlmWasmError::UnknownModel("gpt-9".into()).to_string(),
+            "Unknown model 'gpt-9': no pricing data available"
+        );
+        let e = LlmWasmError::Provider { kind: Some("overloaded_error".into()), message: "Overloaded".into() };
+        assert_eq!(e.to_string(), "Provider error (overloaded_error): Overloaded");
+        let e = LlmWasmError::Provider { kind: None, message: "boom".into() };
+        assert_eq!(e.to_string(), "Provider error: boom");
     }
 
     #[test]

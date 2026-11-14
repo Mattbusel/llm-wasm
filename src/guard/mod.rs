@@ -13,6 +13,10 @@ use crate::error::LlmWasmError;
 use crate::types::ChatRequest;
 
 /// The outcome of a single guard evaluation.
+///
+/// `#[non_exhaustive]` since 0.3: a `match` on it needs a `_` arm.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum GuardResult {
     /// The request may proceed unchanged.
     Allow,
@@ -26,7 +30,10 @@ pub enum GuardResult {
 }
 
 /// A composable check applied to a [`ChatRequest`].
-pub trait Guard {
+///
+/// Guards are `Send + Sync` (since 0.3), so a [`GuardChain`] can live in
+/// `Arc` shared state of an async server (axum, tower, actix) or a `static`.
+pub trait Guard: Send + Sync {
     /// Short name identifying this guard (used in error messages).
     fn name(&self) -> &str;
 
@@ -51,6 +58,7 @@ pub trait Guard {
 /// let ok = ChatRequest::new("m", vec![ChatMessage::new(Role::User, "spammer list")]);
 /// assert!(matches!(guard.check(&ok), GuardResult::Allow));
 /// ```
+#[derive(Debug, Clone)]
 pub struct ContentGuard {
     blocklist: Vec<String>,
     lowered: Vec<String>,
@@ -116,6 +124,7 @@ impl Guard for ContentGuard {
 /// let req = ChatRequest::new("m", vec![ChatMessage::new(Role::User, "hello world!")]);
 /// assert!(matches!(guard.check(&req), GuardResult::Block { .. }));
 /// ```
+#[derive(Debug, Clone)]
 pub struct LengthGuard {
     max_total_chars: usize,
 }
@@ -162,6 +171,15 @@ impl Guard for LengthGuard {
 /// ```
 pub struct GuardChain {
     guards: Vec<Box<dyn Guard>>,
+}
+
+impl std::fmt::Debug for GuardChain {
+    /// Lists the guards by [`Guard::name`], in order.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GuardChain")
+            .field("guards", &self.guards.iter().map(|g| g.name()).collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 impl Default for GuardChain {
@@ -295,6 +313,14 @@ mod tests {
         let chain = GuardChain::new().add(LengthGuard::new(2));
         let result = chain.check(&req("too long"));
         assert!(matches!(result, Err(LlmWasmError::GuardBlocked { .. })));
+    }
+
+    #[test]
+    fn test_guard_chain_debug_lists_names_and_result_clones() {
+        let chain = GuardChain::new().add(ContentGuard::new(vec![])).add(LengthGuard::new(1));
+        assert_eq!(format!("{chain:?}"), r#"GuardChain { guards: ["content", "length"] }"#);
+        let r = GuardResult::Block { reason: "x".into() };
+        assert!(matches!(r.clone(), GuardResult::Block { reason } if reason == "x"));
     }
 
     #[test]

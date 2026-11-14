@@ -23,7 +23,7 @@ function check(name, fn) {
 check("estimateCost uses the real price", () => {
   // gpt-4o-mini: $0.15 in / $0.60 out per million tokens
   assert.ok(Math.abs(llm.estimateCost("gpt-4o-mini", 1000, 500) - 0.00045) < 1e-12);
-  assert.throws(() => llm.estimateCost("no-such-model", 1, 1), /unknown model/);
+  assert.throws(() => llm.estimateCost("no-such-model", 1, 1), /unknown model/i);
 });
 
 check("knownModels lists the table", () => {

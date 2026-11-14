@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+Cache-aware cost, thread-safe guards and routers, and an API that can grow without breaking you again.
+
+### Added
+- `types::Usage { input, output, cache_read, cache_write, reasoning }` with `Usage::new(input, output)`, `with_*` setters, `total_input`, `total_output`, `total`, and `+` / `+=` for summing a run. The rustdoc maps Anthropic and OpenAI usage fields onto it. `ChatResponse::usage()` and `From<StreamUsage> for Usage` convert existing counts.
+- `ModelPricing::cost(&Usage)`: prices prompt-cache reads and writes at their own rates (falling back to the input rate when the provider lists none) and bills reasoning tokens at the output rate. Before, a call that read 180k tokens from Anthropic's prompt cache was priced as if all 180k were fresh input: `claude-opus-5-5` with 3k input, 180k cache read, 20k cache write and 1.2k output costs $0.172, not $0.836.
+- `ModelPricing` now exposes what the price table already held: `provider`, `cache_read_per_million`, `cache_write_per_million` (both `Option<f64>`) and `max_input_tokens` (`Option<u32>`). `ModelPricing::new(input, output)` plus `with_provider`, `with_cache_read`, `with_cache_write` and `with_max_input_tokens` build pricing for models missing from the table.
+- `CostLedger::record_usage(model, &Usage)`: record a call with its cache and reasoning split; returns the new total and enforces the budget like `record`.
+- `cost::context_window(model)`: the model's maximum input tokens from the table.
+- `LlmWasmError::UnknownModel(String)`, returned by `pricing_for_model`, `CostLedger::record` and `record_usage` for models not in the table.
+- `LlmWasmError::Provider { kind: Option<String>, message: String }`: `StreamDecoder` now reports provider `error` events with this variant, with the provider's error type or code (`"overloaded_error"`, `"rate_limit_exceeded"`) in `kind`, so callers can tell a provider overload from their own misconfiguration.
+- `Debug` for `GuardChain` (lists guard names) and `Router`; `Debug` and `Clone` for `GuardResult`, `ContentGuard` and `LengthGuard`; `Clone` for `Router`.
+- `tests/send_sync.rs`: compile-time checks that `GuardChain`, `Router`, `CostLedger`, `TtlCache`, `StreamDecoder` (feature `stream`) and `SecretGuard` (feature `secrets`) are `Send + Sync`, plus a test that shares a `GuardChain` across threads in an `Arc`.
+
+### Changed (breaking)
+- `trait Guard: Send + Sync`. A `GuardChain` can now sit in `Arc` state of an axum, tower or actix server or in a `static`; before, it was `!Send` and `!Sync` and failed to compile there.
+- `#[non_exhaustive]` on `LlmWasmError`, `GuardResult`, `RoutingCondition`, `Role`, `ModelPricing` and the new `Usage`. Future variants and fields can ship in minor releases.
+- `pricing_for_model` and `CostLedger::record` return `UnknownModel` instead of `InvalidConfig { field: "model", .. }` for an unknown model. Its message is now `Unknown model '<name>': no pricing data available` (the JS bindings throw it too).
+- `StreamDecoder::push` returns `Provider` instead of `InvalidConfig { field: "stream", .. }` for provider error events.
+- `thiserror` 1 -> 2. Dependents already on thiserror 2 no longer build two copies of it (and of its proc-macro stack). MSRV stays 1.88.
+- `ModelPricing::cost_usd` is now `cost(&Usage::new(input, output))`; the result is unchanged.
+
+### Migrating from 0.2
+- Custom guards: a guard must be `Send + Sync`. Plain data, `String`, `Vec`, `regex::Regex` and `Arc<...>` are; replace `Rc<T>` with `Arc<T>` and `RefCell<T>` / `Cell<T>` with `Mutex<T>` / atomics.
+- `match` on `LlmWasmError`, `GuardResult`, `RoutingCondition` or `Role` outside this crate needs a final `_ => ...` arm.
+- `ModelPricing { input_per_million: a, output_per_million: b }` no longer compiles outside the crate: use `ModelPricing::new(a, b)`.
+- Code that matched `InvalidConfig { field, .. }` with `field == "model"` should match `UnknownModel(_)`; code that matched `field == "stream"` should match `Provider { .. }`.
+- To price prompt-cached calls correctly, switch `ledger.record(model, input, output)` to `ledger.record_usage(model, &Usage::new(input, output).with_cache_read(cached).with_cache_write(written))`. For OpenAI, `input` is `prompt_tokens - cached_tokens`.
+
+## 0.2.1 (2026-10-21)
+
+- Republished with the rewritten README (crate docs on docs.rs come from it). No code changes.
+
 ## 0.2.0 (2026-10-03)
 
 ### Added

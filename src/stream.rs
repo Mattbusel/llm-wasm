@@ -27,7 +27,7 @@
 //! ```
 
 use crate::error::LlmWasmError;
-use crate::types::StreamChunk;
+use crate::types::{StreamChunk, Usage};
 use bytes::BytesMut;
 use serde_json::Value;
 use sse_core::{SseDecoder, SseEvent};
@@ -49,6 +49,29 @@ pub struct StreamDecoder {
     finished: bool,
     usage: Option<StreamUsage>,
     text: String,
+}
+
+impl From<StreamUsage> for Usage {
+    fn from(u: StreamUsage) -> Self {
+        Usage::new(u64::from(u.input_tokens), u64::from(u.output_tokens))
+    }
+}
+
+/// `{"type": "overloaded_error", "message": "..."}` (Anthropic) or
+/// `{"message": "...", "type": "...", "code": "rate_limit_exceeded"}` (OpenAI).
+/// A non-null `code` wins over `type`, since OpenAI's `type` is coarse.
+fn provider_error(err: &Value) -> LlmWasmError {
+    let message = match err {
+        Value::String(s) => s.clone(),
+        _ => err.get("message").and_then(Value::as_str).unwrap_or("unknown error").to_string(),
+    };
+    let as_kind = |v: Option<&Value>| match v {
+        Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(Value::Number(n)) => Some(n.to_string()),
+        _ => None,
+    };
+    let kind = as_kind(err.get("code")).or_else(|| as_kind(err.get("type")));
+    LlmWasmError::Provider { kind, message }
 }
 
 fn u32_at(v: &Value, path: &[&str]) -> Option<u32> {
@@ -82,7 +105,8 @@ impl StreamDecoder {
     /// # Errors
     /// [`LlmWasmError::Serialization`] if an event's data is not JSON, or an
     /// event exceeds the size limit. A provider `error` event becomes
-    /// [`LlmWasmError::InvalidConfig`] with the provider's message.
+    /// [`LlmWasmError::Provider`] with the provider's error type or code as
+    /// `kind` (for example `"overloaded_error"`) and its message.
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<StreamChunk>, LlmWasmError> {
         self.buf.extend_from_slice(bytes);
         let mut out = Vec::new();
@@ -134,16 +158,12 @@ impl StreamDecoder {
                 self.finished = true;
                 return Ok(Some(StreamChunk { delta: String::new(), finished: true }));
             }
-            "error" => {
-                let msg = v.pointer("/error/message").and_then(Value::as_str).unwrap_or("unknown error");
-                return Err(LlmWasmError::InvalidConfig { field: "stream".into(), reason: format!("provider error: {msg}") });
-            }
+            "error" => return Err(provider_error(v.get("error").unwrap_or(&Value::Null))),
             _ => {}
         }
         // OpenAI-style (also errors sent inside the stream)
         if let Some(err) = v.get("error") {
-            let msg = err.get("message").and_then(Value::as_str).unwrap_or("unknown error");
-            return Err(LlmWasmError::InvalidConfig { field: "stream".into(), reason: format!("provider error: {msg}") });
+            return Err(provider_error(err));
         }
         if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
             self.usage = Some(StreamUsage {
@@ -249,8 +269,20 @@ event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
         let mut d = StreamDecoder::new();
         let e = d.push(b"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n").unwrap_err();
         assert!(e.to_string().contains("Overloaded"));
+        assert!(matches!(e, LlmWasmError::Provider { kind: Some(ref k), ref message } if k == "overloaded_error" && message == "Overloaded"));
         let mut d = StreamDecoder::new();
-        assert!(d.push(b"data: {\"error\":{\"message\":\"rate limited\"}}\n\n").unwrap_err().to_string().contains("rate limited"));
+        let e = d.push(b"data: {\"error\":{\"message\":\"rate limited\",\"type\":\"requests\",\"code\":\"rate_limit_exceeded\"}}\n\n").unwrap_err();
+        assert!(e.to_string().contains("rate limited"));
+        assert!(matches!(e, LlmWasmError::Provider { kind: Some(ref k), .. } if k == "rate_limit_exceeded"));
+        let mut d = StreamDecoder::new();
+        let e = d.push(b"data: {\"error\":{\"message\":\"x\",\"code\":null}}\n\n").unwrap_err();
+        assert!(matches!(e, LlmWasmError::Provider { kind: None, .. }));
+    }
+
+    #[test]
+    fn stream_usage_converts_to_usage() {
+        let u: Usage = StreamUsage { input_tokens: 25, output_tokens: 15 }.into();
+        assert_eq!(u, Usage::new(25, 15));
     }
 
     #[test]

@@ -8,8 +8,12 @@
 /// Serialized in lowercase (`"system"`, `"user"`, `"assistant"`, `"tool"`),
 /// as the OpenAI-style chat APIs expect. The capitalised names written by
 /// 0.1 (`"User"`) are still accepted when reading.
+///
+/// Marked `#[non_exhaustive]` since 0.3: a `match` on it needs a `_` arm, so
+/// new roles can be added in a minor release.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Role {
     /// System-level instructions.
     #[serde(alias = "System", alias = "developer")]
@@ -91,6 +95,129 @@ pub struct ChatResponse {
     pub output_tokens: u32,
 }
 
+impl ChatResponse {
+    /// The token counts of this response as a [`Usage`] (no cache or
+    /// reasoning split), ready for [`crate::cost::ModelPricing::cost`].
+    pub fn usage(&self) -> Usage {
+        Usage::new(u64::from(self.input_tokens), u64::from(self.output_tokens))
+    }
+}
+
+/// Token usage of one model call, split the way providers bill it.
+///
+/// Every field counts tokens billed at a different rate, so a token belongs to
+/// exactly one field:
+///
+/// | field | billed at | Anthropic usage | OpenAI usage |
+/// |---|---|---|---|
+/// | `input` | input price | `input_tokens` | `prompt_tokens - prompt_tokens_details.cached_tokens` |
+/// | `cache_read` | cache-read price | `cache_read_input_tokens` | `prompt_tokens_details.cached_tokens` |
+/// | `cache_write` | cache-write price | `cache_creation_input_tokens` | (not reported) |
+/// | `output` | output price | `output_tokens` | `completion_tokens - completion_tokens_details.reasoning_tokens` |
+/// | `reasoning` | output price | (included in `output_tokens`) | `completion_tokens_details.reasoning_tokens` |
+///
+/// Anthropic's `input_tokens` already excludes cached tokens; OpenAI's
+/// `prompt_tokens` includes them, so subtract. Splitting reasoning out of
+/// `output` is optional (both are billed at the output price); it only keeps
+/// the count visible.
+///
+/// ```
+/// use llm_wasm::types::Usage;
+/// let u = Usage::new(1_200, 300).with_cache_read(50_000).with_cache_write(2_000);
+/// assert_eq!(u.total(), 53_500);
+/// ```
+///
+/// `#[non_exhaustive]`: build it with [`Usage::new`] and the `with_*` setters
+/// (or [`Default`]), so fields can be added without a breaking release.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct Usage {
+    /// Uncached input (prompt) tokens.
+    pub input: u64,
+    /// Visible output (completion) tokens.
+    pub output: u64,
+    /// Input tokens served from the provider's prompt cache.
+    pub cache_read: u64,
+    /// Input tokens written to the provider's prompt cache.
+    pub cache_write: u64,
+    /// Reasoning ("thinking") tokens not already counted in `output`.
+    pub reasoning: u64,
+}
+
+impl Usage {
+    /// Uncached input and visible output tokens; the other counts are zero.
+    pub fn new(input: u64, output: u64) -> Self {
+        Self { input, output, ..Self::default() }
+    }
+
+    /// Set the uncached input token count.
+    pub fn with_input(mut self, tokens: u64) -> Self {
+        self.input = tokens;
+        self
+    }
+
+    /// Set the visible output token count.
+    pub fn with_output(mut self, tokens: u64) -> Self {
+        self.output = tokens;
+        self
+    }
+
+    /// Set the number of input tokens read from the prompt cache.
+    pub fn with_cache_read(mut self, tokens: u64) -> Self {
+        self.cache_read = tokens;
+        self
+    }
+
+    /// Set the number of input tokens written to the prompt cache.
+    pub fn with_cache_write(mut self, tokens: u64) -> Self {
+        self.cache_write = tokens;
+        self
+    }
+
+    /// Set the number of reasoning tokens (not already in `output`).
+    pub fn with_reasoning(mut self, tokens: u64) -> Self {
+        self.reasoning = tokens;
+        self
+    }
+
+    /// All prompt-side tokens: `input + cache_read + cache_write`.
+    pub fn total_input(&self) -> u64 {
+        self.input.saturating_add(self.cache_read).saturating_add(self.cache_write)
+    }
+
+    /// All generated tokens: `output + reasoning`.
+    pub fn total_output(&self) -> u64 {
+        self.output.saturating_add(self.reasoning)
+    }
+
+    /// Every token in the call (saturating).
+    pub fn total(&self) -> u64 {
+        self.total_input().saturating_add(self.total_output())
+    }
+}
+
+impl std::ops::Add for Usage {
+    type Output = Usage;
+
+    /// Field-wise saturating sum, for totalling a conversation or an agent run.
+    fn add(self, rhs: Usage) -> Usage {
+        Usage {
+            input: self.input.saturating_add(rhs.input),
+            output: self.output.saturating_add(rhs.output),
+            cache_read: self.cache_read.saturating_add(rhs.cache_read),
+            cache_write: self.cache_write.saturating_add(rhs.cache_write),
+            reasoning: self.reasoning.saturating_add(rhs.reasoning),
+        }
+    }
+}
+
+impl std::ops::AddAssign for Usage {
+    fn add_assign(&mut self, rhs: Usage) {
+        *self = *self + rhs;
+    }
+}
+
 /// A single chunk from a streaming response.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StreamChunk {
@@ -140,6 +267,22 @@ mod tests {
             output_tokens: 5,
         };
         assert_eq!(r.input_tokens + r.output_tokens, 15);
+    }
+
+    #[test]
+    fn test_usage_builders_totals_and_sum() {
+        let u = Usage::new(10, 5).with_cache_read(100).with_cache_write(20).with_reasoning(7);
+        assert_eq!((u.total_input(), u.total_output(), u.total()), (130, 12, 142));
+        let mut sum = Usage::default();
+        sum += u;
+        sum += Usage::new(1, 1);
+        assert_eq!(sum, Usage::new(11, 6).with_cache_read(100).with_cache_write(20).with_reasoning(7));
+        assert_eq!((Usage::new(u64::MAX, 0) + Usage::new(1, 0)).input, u64::MAX);
+        // missing fields read as zero
+        let back: Usage = serde_json::from_str(r#"{"input":3,"cache_read":4}"#).unwrap();
+        assert_eq!(back, Usage::new(3, 0).with_cache_read(4));
+        let r = ChatResponse { content: String::new(), model: "m".into(), input_tokens: 9, output_tokens: 2 };
+        assert_eq!(r.usage(), Usage::new(9, 2));
     }
 
     #[test]

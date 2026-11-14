@@ -128,14 +128,14 @@ fn pricing_opus_more_expensive_than_sonnet() {
 
 #[test]
 fn pricing_cost_only_input_tokens() {
-    let p = ModelPricing { input_per_million: 3.0, output_per_million: 15.0 };
+    let p = ModelPricing::new(3.0, 15.0);
     let cost = p.cost_usd(1_000_000, 0);
     assert!((cost - 3.0).abs() < 1e-9);
 }
 
 #[test]
 fn pricing_cost_only_output_tokens() {
-    let p = ModelPricing { input_per_million: 3.0, output_per_million: 15.0 };
+    let p = ModelPricing::new(3.0, 15.0);
     let cost = p.cost_usd(0, 1_000_000);
     assert!((cost - 15.0).abs() < 1e-9);
 }
