@@ -22,3 +22,7 @@ jobs:
         run: cargo test --all-features
       - name: Clippy
         run: cargo clippy --all-features -- -D warnings
+      - name: Browser examples (Leptos, Dioxus) for wasm32
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cd examples/browser && cargo build --target wasm32-unknown-unknown

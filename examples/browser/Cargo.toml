@@ -1,0 +1,19 @@
+# Browser examples for llm-wasm: the same chat client in Leptos and in Dioxus.
+# A separate workspace, so the UI frameworks never become dependencies of the
+# library. Build both for the browser target:
+#
+#   cd examples/browser
+#   cargo build --target wasm32-unknown-unknown
+#
+# and serve one with Trunk (`trunk serve` in leptos-chat) or the Dioxus CLI
+# (`dx serve --platform web` in dioxus-chat).
+[workspace]
+members = ["leptos-chat", "dioxus-chat"]
+resolver = "2"
+
+[workspace.dependencies]
+llm-wasm = { path = "../.." }
+gloo-net = { version = "0.6", default-features = false, features = ["http", "json"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+js-sys = "0.3"
+serde_json = "1"

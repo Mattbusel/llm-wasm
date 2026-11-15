@@ -1,6 +1,6 @@
 [package]
 name = "llm-wasm"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -10,7 +10,7 @@ repository = "https://gitlab.com/mattbusel/llm-wasm"
 documentation = "https://docs.rs/llm-wasm"
 keywords = ["llm", "wasm", "openai", "anthropic", "cost"]
 categories = ["wasm", "web-programming", "api-bindings"]
-include = ["src/**/*.rs", "benches/**/*.rs", "examples/**/*.rs", "examples/**/*.mjs", "scripts/update_prices.py", "Cargo.toml", "README.md", "CHANGELOG.md", "LICENSE"]
+include = ["src/**/*.rs", "benches/**/*.rs", "examples/*.rs", "examples/node/*.mjs", "scripts/update_prices.py", "Cargo.toml", "README.md", "CHANGELOG.md", "LICENSE"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -33,6 +33,14 @@ repair = ["dep:json5"]
 jinja = ["dep:minijinja", "dep:minijinja-contrib"]
 ## SecretGuard: block or redact API keys, emails and card numbers before they leave (regex).
 secrets = ["dep:regex"]
+## Price models from llm-prices 1.2 (dated, source-cited rows with long-context tiers),
+## falling back to the built-in table for models it does not list.
+llm-prices = ["dep:llm-prices"]
+## `rig::CostLedgerHook`: price every rig agent turn and stop the run at a USD budget
+## (rig-agent 0.46; needs Rust 1.97.1, while the rest of the crate builds on 1.88).
+rig = ["dep:rig-agent"]
+## Internal: rig's mock models for this crate's rig tests and example. Not part of the API.
+__rig-test-utils = ["rig", "rig-agent/test-utils"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -54,11 +62,16 @@ minijinja = { version = "2", default-features = false, features = ["builtins", "
 minijinja-contrib = { version = "2", default-features = false, features = ["pycompat"], optional = true }
 # feature "secrets"
 regex = { version = "1", default-features = false, features = ["std"], optional = true }
+# feature "llm-prices"
+llm-prices = { version = "1.2", default-features = false, optional = true }
+# feature "rig"
+rig-agent = { version = "0.46", default-features = false, optional = true }
 
 [dev-dependencies]
 proptest = "1"
 criterion = "0.5"
 llm_wasm_011 = { package = "llm-wasm", version = "=0.1.1" }
+tokio = { version = "1.40", features = ["macros", "rt"] }
 
 [[bench]]
 name = "vs_alternatives"
@@ -78,6 +91,17 @@ required-features = ["jinja", "secrets"]
 [[example]]
 name = "repair_json"
 required-features = ["repair"]
+
+# Runs offline against rig's mock model:
+# cargo run --example rig_usd_budget --features __rig-test-utils
+[[example]]
+name = "rig_usd_budget"
+required-features = ["rig", "__rig-test-utils"]
+
+# rig's mock models need rig-agent's `test-utils` feature (and Rust 1.97.1).
+[[test]]
+name = "rig_hook"
+required-features = ["rig", "__rig-test-utils"]
 
 [package.metadata.docs.rs]
 all-features = true

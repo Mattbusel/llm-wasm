@@ -195,6 +195,69 @@ impl Usage {
     pub fn total(&self) -> u64 {
         self.total_input().saturating_add(self.total_output())
     }
+
+    /// Read the `usage` of an OpenAI-compatible or Anthropic response.
+    ///
+    /// `json` is either the whole response body or its `usage` object. The
+    /// shape is detected from the field names:
+    ///
+    /// - OpenAI Chat Completions and compatible APIs (`prompt_tokens`,
+    ///   `completion_tokens`, `prompt_tokens_details.cached_tokens`,
+    ///   `completion_tokens_details.reasoning_tokens`): cached tokens are
+    ///   moved from `input` to `cache_read`, reasoning from `output` to
+    ///   `reasoning`. DeepSeek's `prompt_cache_hit_tokens` is read too.
+    /// - OpenAI Responses API (`input_tokens`, `output_tokens`,
+    ///   `input_tokens_details`, `output_tokens_details`): the same split.
+    /// - Anthropic Messages (`input_tokens`, `output_tokens`,
+    ///   `cache_read_input_tokens`, `cache_creation_input_tokens`): taken as
+    ///   is, since Anthropic's `input_tokens` already excludes the cache.
+    ///
+    /// Missing or non-numeric fields count as zero, and the parts never
+    /// exceed the totals they are subtracted from, so a malformed body gives
+    /// smaller counts, never a panic. Returns `None` when `json` has neither
+    /// shape.
+    ///
+    /// ```
+    /// use llm_wasm::types::Usage;
+    /// let body = serde_json::json!({
+    ///     "choices": [],
+    ///     "usage": {
+    ///         "prompt_tokens": 2_000, "completion_tokens": 300,
+    ///         "prompt_tokens_details": {"cached_tokens": 1_500},
+    ///         "completion_tokens_details": {"reasoning_tokens": 100}
+    ///     }
+    /// });
+    /// let u = Usage::from_json(&body).unwrap();
+    /// assert_eq!(u, Usage::new(500, 200).with_cache_read(1_500).with_reasoning(100));
+    /// ```
+    pub fn from_json(json: &serde_json::Value) -> Option<Usage> {
+        let u = json.get("usage").filter(|u| u.is_object()).unwrap_or(json);
+        let n = |v: Option<&serde_json::Value>| v.and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let at = |path: &[&str]| n(path.iter().try_fold(u, |v, k| v.get(k)));
+        if u.get("prompt_tokens").is_some() || u.get("completion_tokens").is_some() {
+            let prompt = at(&["prompt_tokens"]);
+            let completion = at(&["completion_tokens"]);
+            let cached = at(&["prompt_tokens_details", "cached_tokens"]).max(at(&["prompt_cache_hit_tokens"])).min(prompt);
+            let reasoning = at(&["completion_tokens_details", "reasoning_tokens"]).min(completion);
+            return Some(Usage::new(prompt - cached, completion - reasoning).with_cache_read(cached).with_reasoning(reasoning));
+        }
+        if u.get("input_tokens").is_none() && u.get("output_tokens").is_none() {
+            return None;
+        }
+        let input = at(&["input_tokens"]);
+        let output = at(&["output_tokens"]);
+        if u.get("input_tokens_details").is_some() || u.get("output_tokens_details").is_some() {
+            // OpenAI Responses API: input_tokens includes the cached part.
+            let cached = at(&["input_tokens_details", "cached_tokens"]).min(input);
+            let reasoning = at(&["output_tokens_details", "reasoning_tokens"]).min(output);
+            return Some(Usage::new(input - cached, output - reasoning).with_cache_read(cached).with_reasoning(reasoning));
+        }
+        Some(
+            Usage::new(input, output)
+                .with_cache_read(at(&["cache_read_input_tokens"]))
+                .with_cache_write(at(&["cache_creation_input_tokens"])),
+        )
+    }
 }
 
 impl std::ops::Add for Usage {
@@ -283,6 +346,29 @@ mod tests {
         assert_eq!(back, Usage::new(3, 0).with_cache_read(4));
         let r = ChatResponse { content: String::new(), model: "m".into(), input_tokens: 9, output_tokens: 2 };
         assert_eq!(r.usage(), Usage::new(9, 2));
+    }
+
+    #[test]
+    fn test_usage_from_json_shapes() {
+        use serde_json::json;
+        // Anthropic: input_tokens already excludes the cache
+        let a = json!({"usage": {"input_tokens": 30, "output_tokens": 9,
+            "cache_read_input_tokens": 1_000, "cache_creation_input_tokens": 200}});
+        assert_eq!(Usage::from_json(&a), Some(Usage::new(30, 9).with_cache_read(1_000).with_cache_write(200)));
+        // OpenAI Responses API: the cached part is inside input_tokens
+        let r = json!({"input_tokens": 1_000, "output_tokens": 50,
+            "input_tokens_details": {"cached_tokens": 800}, "output_tokens_details": {"reasoning_tokens": 20}});
+        assert_eq!(Usage::from_json(&r), Some(Usage::new(200, 30).with_cache_read(800).with_reasoning(20)));
+        // DeepSeek reports cache hits at the top level
+        let d = json!({"prompt_tokens": 100, "completion_tokens": 5, "prompt_cache_hit_tokens": 60});
+        assert_eq!(Usage::from_json(&d), Some(Usage::new(40, 5).with_cache_read(60)));
+        // nonsense never underflows; unknown shapes are None
+        let bad = json!({"prompt_tokens": 1, "completion_tokens": "x", "prompt_tokens_details": {"cached_tokens": 9}});
+        assert_eq!(Usage::from_json(&bad), Some(Usage::new(0, 0).with_cache_read(1)));
+        assert_eq!(Usage::from_json(&json!({"choices": []})), None);
+        assert_eq!(Usage::from_json(&json!(null)), None);
+        // a body whose usage is null falls back to reading the body itself
+        assert_eq!(Usage::from_json(&json!({"usage": null})), None);
     }
 
     #[test]

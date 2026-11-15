@@ -1,0 +1,14 @@
+[package]
+name = "leptos-chat"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "llm-wasm in a Leptos app: OpenAI-compatible chat with retries, a TTL cache and a USD budget"
+
+[dependencies]
+llm-wasm = { workspace = true }
+gloo-net = { workspace = true }
+gloo-timers = { workspace = true }
+js-sys = { workspace = true }
+serde_json = { workspace = true }
+leptos = { version = "0.8", features = ["csr"] }

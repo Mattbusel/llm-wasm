@@ -11,6 +11,9 @@ pub mod guard;
 #[cfg_attr(docsrs, doc(cfg(feature = "js")))]
 pub mod js;
 pub mod retry;
+#[cfg(feature = "rig")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rig")))]
+pub mod rig;
 pub mod routing;
 #[cfg(feature = "secrets")]
 #[cfg_attr(docsrs, doc(cfg(feature = "secrets")))]

@@ -1,6 +1,26 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.4.0 (unreleased)
+
+A USD budget for rig agents, Leptos and Dioxus examples, and llm-prices as an optional price source. No breaking changes.
+
+### Added
+- Feature `rig`: `rig::CostLedgerHook`, an `AgentHook` for rig-agent 0.46. Each finished model turn is priced at the model's real rates (prompt-cache reads and writes at their own prices, reasoning at the output price) and booked in a `CostLedger`; the run stops before the next model call once the budget is spent, or before the tools run when an over-budget turn asked for tool calls. A turn that crosses the budget is still booked, because it was paid for, and an over-budget final answer is returned, not thrown away. `CostLedgerHook::new(model, budget_usd)`, `with_ledger` (share one `Arc<Mutex<CostLedger>>` between runs, agents and models), `with_pricing` (your own `ModelPricing`), `stop_below_usd` (stop while that much is still left), `turn_cost_usd`, `spent_usd`, `ledger`. A model in no price table is priced at the cost rig reports for the turn when it is complete; otherwise the run stops instead of running unbudgeted. `From<&rig_agent::completion::Usage> for Usage` splits rig's totals into fresh input, cache reads, cache writes, output and reasoning. The feature needs Rust 1.97.1 (rig-agent 0.46's minimum); the rest of the crate still builds on 1.88. Tested against rig's mock models in `tests/rig_hook.rs` (feature `__rig-test-utils`); offline example `examples/rig_usd_budget.rs`.
+- Feature `llm-prices`: prices from llm-prices 1.2 first (dated, source-cited rows, provider-aware id lookup, long-context tiers), falling back to the built-in table for models it does not list. `ModelPricing::from_llm_prices(&llm_prices::Price)`. Context windows still come from the built-in table.
+- `cost::cost_for_model(model, &Usage)`: the cost of one call. With `llm-prices` it bills long-context tiers (for example `gpt-5.4` over 272k prompt tokens at $5 / $22.50 instead of $2.50 / $15 per million). `CostLedger::record` and `record_usage` now price through it; without the feature the result is unchanged.
+- `CostLedger::record_paid_usd`: book a cost that was already paid even when it crosses the budget (`record_usd` refuses it), so the ledger matches the bill. `CostLedger::budget_usd`.
+- `Usage::from_json`: read the `usage` of an OpenAI Chat Completions, OpenAI Responses, DeepSeek or Anthropic response (whole body or the `usage` object) into the billed split, cached and reasoning tokens moved out of the totals.
+- `examples/browser/`: a Leptos 0.8 app and a Dioxus 0.7 app (a separate workspace, so neither framework becomes a dependency) that call an OpenAI-compatible `/chat/completions` from wasm with retries on 429 and 5xx that wait real browser time (gloo-timers) for the jittered backoff or `Retry-After`, a five-minute `TtlCache`, and a `CostLedger` with a $0.50 budget. The shared client is `examples/browser/shared/chat.rs`. Both build for `wasm32-unknown-unknown`, and both were run in Chrome against a local server that answers 429 with `Retry-After: 1` and then 200: two attempts one second apart, the cache-aware cost shown, and the repeated question served from the cache with no request.
+- CI: the browser examples build (and pass clippy) for `wasm32-unknown-unknown`; the `rig_usd_budget` example runs; the wasm module is also built with `llm-prices`.
+
+### Why llm-prices is optional, not the only price table
+llm-prices 1.2 lists 136 rows against the built-in table's 232 models and carries no context windows, so replacing the table would make known models unknown and break `context_window`. Keeping both, the feature adds about 50 KB to the wasm module (`js` feature, stripped, `opt-level = "z"`, LTO: 599,048 to 650,639 bytes), so it is off by default.
+
+### Changed
+- The MSRV CI job builds every feature except `rig`.
+- The packaged crate includes only top-level `examples/*.rs` and `examples/node/*.mjs` (the browser apps live in the repository).
+
+## 0.3.0
 
 Cache-aware cost, thread-safe guards and routers, and an API that can grow without breaking you again.
 
