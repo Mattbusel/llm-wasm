@@ -1,12 +1,12 @@
 [package]
 name = "llm-wasm"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
 description = "LLM call logic for WebAssembly and native: real model prices and cost ledger, retry with jitter and Retry-After, guards, routing, cache, templates, JSON extraction, optional JS bindings"
 readme = "README.md"
-repository = "https://gitlab.com/mattbusel/llm-wasm"
+repository = "https://github.com/Mattbusel/llm-wasm"
 documentation = "https://docs.rs/llm-wasm"
 keywords = ["llm", "wasm", "openai", "anthropic", "cost"]
 categories = ["wasm", "web-programming", "api-bindings"]
