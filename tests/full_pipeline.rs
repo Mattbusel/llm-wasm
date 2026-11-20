@@ -49,14 +49,20 @@ fn chat_response_token_sum() {
 
 #[test]
 fn stream_chunk_delta_field() {
-    let chunk = StreamChunk { delta: "partial text".into(), finished: false };
+    let chunk = StreamChunk {
+        delta: "partial text".into(),
+        finished: false,
+    };
     assert_eq!(chunk.delta, "partial text");
     assert!(!chunk.finished);
 }
 
 #[test]
 fn stream_chunk_finished_flag_true() {
-    let chunk = StreamChunk { delta: "".into(), finished: true };
+    let chunk = StreamChunk {
+        delta: "".into(),
+        finished: true,
+    };
     assert!(chunk.finished);
 }
 
@@ -93,7 +99,9 @@ fn cost_ledger_records_accumulate() {
 fn cost_ledger_no_budget_never_exceeds() {
     let mut ledger = CostLedger::new();
     // Record a huge amount: should never "exceed" since no budget
-    ledger.record("claude-opus-4-6", 100_000_000, 100_000_000).unwrap();
+    ledger
+        .record("claude-opus-4-6", 100_000_000, 100_000_000)
+        .unwrap();
     assert!(!ledger.exceeded_budget());
 }
 
@@ -164,10 +172,7 @@ fn content_guard_multiple_blocked_terms() {
 #[test]
 fn content_guard_partial_word_match() {
     let guard = ContentGuard::new(vec!["spam".into()]);
-    let req = ChatRequest::new(
-        "m",
-        vec![ChatMessage::new(Role::User, "antispam filter")],
-    );
+    let req = ChatRequest::new("m", vec![ChatMessage::new(Role::User, "antispam filter")]);
     // "antispam" contains "spam" as substring
     assert!(matches!(guard.check(&req), GuardResult::Block { .. }));
 }
@@ -236,14 +241,23 @@ fn router_always_condition_overrides_fallback() {
 #[test]
 fn router_message_count_threshold() {
     let mut router = Router::new("default");
-    router.add_rule(RoutingRule::new(RoutingCondition::MessageCountExceeds(5), "long-ctx"));
-    let short = ChatRequest::new("m", vec![
-        ChatMessage::new(Role::User, "hi"),
-        ChatMessage::new(Role::User, "hi"),
-    ]);
-    let long = ChatRequest::new("m", (0..10)
-        .map(|_| ChatMessage::new(Role::User, "msg"))
-        .collect());
+    router.add_rule(RoutingRule::new(
+        RoutingCondition::MessageCountExceeds(5),
+        "long-ctx",
+    ));
+    let short = ChatRequest::new(
+        "m",
+        vec![
+            ChatMessage::new(Role::User, "hi"),
+            ChatMessage::new(Role::User, "hi"),
+        ],
+    );
+    let long = ChatRequest::new(
+        "m",
+        (0..10)
+            .map(|_| ChatMessage::new(Role::User, "msg"))
+            .collect(),
+    );
     assert_eq!(router.route(&short), "default");
     assert_eq!(router.route(&long), "long-ctx");
 }
@@ -264,10 +278,28 @@ fn router_model_name_contains() {
 #[test]
 fn router_max_tokens_below() {
     let mut router = Router::new("fallback");
-    router.add_rule(RoutingRule::new(RoutingCondition::MaxTokensBelow(256), "mini"));
-    let small = ChatRequest { model: "m".into(), messages: vec![], max_tokens: Some(100), temperature: None };
-    let large = ChatRequest { model: "m".into(), messages: vec![], max_tokens: Some(512), temperature: None };
-    let none = ChatRequest { model: "m".into(), messages: vec![], max_tokens: None, temperature: None };
+    router.add_rule(RoutingRule::new(
+        RoutingCondition::MaxTokensBelow(256),
+        "mini",
+    ));
+    let small = ChatRequest {
+        model: "m".into(),
+        messages: vec![],
+        max_tokens: Some(100),
+        temperature: None,
+    };
+    let large = ChatRequest {
+        model: "m".into(),
+        messages: vec![],
+        max_tokens: Some(512),
+        temperature: None,
+    };
+    let none = ChatRequest {
+        model: "m".into(),
+        messages: vec![],
+        max_tokens: None,
+        temperature: None,
+    };
     assert_eq!(router.route(&small), "mini");
     assert_eq!(router.route(&large), "fallback");
     assert_eq!(router.route(&none), "fallback");
@@ -370,7 +402,9 @@ fn template_render_multiple_same_var() {
     let engine = TemplateEngine::new();
     let mut ctx = HashMap::new();
     ctx.insert("name".into(), "Bob".into());
-    let out = engine.render("Hello {{name}}, goodbye {{name}}!", &ctx).unwrap();
+    let out = engine
+        .render("Hello {{name}}, goodbye {{name}}!", &ctx)
+        .unwrap();
     assert_eq!(out, "Hello Bob, goodbye Bob!");
 }
 
@@ -423,14 +457,17 @@ fn template_system_prompt_rendering() {
 
 #[test]
 fn pipeline_guard_blocks_before_routing() {
-    let chain = GuardChain::new()
-        .add(ContentGuard::new(vec!["forbidden".into()]));
+    let chain = GuardChain::new().add(ContentGuard::new(vec!["forbidden".into()]));
     let mut router = Router::new("gpt-4o-mini");
-    router.add_rule(RoutingRule::new(RoutingCondition::Always, "claude-sonnet-4-6"));
+    router.add_rule(RoutingRule::new(
+        RoutingCondition::Always,
+        "claude-sonnet-4-6",
+    ));
 
-    let req = ChatRequest::new("m", vec![
-        ChatMessage::new(Role::User, "this is forbidden content"),
-    ]);
+    let req = ChatRequest::new(
+        "m",
+        vec![ChatMessage::new(Role::User, "this is forbidden content")],
+    );
 
     // Guard blocks: routing never reached
     let result = chain.check(&req);
@@ -451,9 +488,7 @@ fn pipeline_guard_allows_then_routes_then_costs() {
 
     let mut ledger = CostLedger::with_budget(10.0);
 
-    let req = ChatRequest::new("m", vec![
-        ChatMessage::new(Role::User, "What is Rust?"),
-    ]);
+    let req = ChatRequest::new("m", vec![ChatMessage::new(Role::User, "What is Rust?")]);
 
     // 1. Guard check
     let modified = chain.check(&req).unwrap();
@@ -480,10 +515,13 @@ fn pipeline_template_generates_request() {
     let system = engine.render("{{>sys}}", &ctx).unwrap();
     let user = engine.render("{{query}}", &ctx).unwrap();
 
-    let req = ChatRequest::new("gpt-4o", vec![
-        ChatMessage::new(Role::System, system.clone()),
-        ChatMessage::new(Role::User, user.clone()),
-    ]);
+    let req = ChatRequest::new(
+        "gpt-4o",
+        vec![
+            ChatMessage::new(Role::System, system.clone()),
+            ChatMessage::new(Role::User, user.clone()),
+        ],
+    );
 
     assert_eq!(req.messages[0].content, "You are a financial assistant.");
     assert_eq!(req.messages[1].content, "What is the P/E ratio?");

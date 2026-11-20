@@ -42,7 +42,10 @@ pub struct TtlCache<K: Hash + Eq = CacheKey> {
 
 impl<K: Hash + Eq> std::fmt::Debug for TtlCache<K> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TtlCache").field("len", &self.entries.len()).field("ttl_ms", &self.ttl_ms).finish()
+        f.debug_struct("TtlCache")
+            .field("len", &self.entries.len())
+            .field("ttl_ms", &self.ttl_ms)
+            .finish()
     }
 }
 
@@ -52,7 +55,10 @@ impl<K: Hash + Eq> TtlCache<K> {
     /// # Arguments
     /// * `ttl_ms`: maximum entry age in milliseconds before expiry
     pub fn new(ttl_ms: f64) -> Self {
-        Self { entries: LruCache::unbounded(), ttl_ms }
+        Self {
+            entries: LruCache::unbounded(),
+            ttl_ms,
+        }
     }
 
     /// A cache that holds at most `max_entries` values. When it is full,
@@ -60,7 +66,10 @@ impl<K: Hash + Eq> TtlCache<K> {
     /// `max_entries` of 0 is treated as 1.
     pub fn with_capacity(ttl_ms: f64, max_entries: usize) -> Self {
         let cap = NonZeroUsize::new(max_entries).unwrap_or(NonZeroUsize::MIN);
-        Self { entries: LruCache::new(cap), ttl_ms }
+        Self {
+            entries: LruCache::new(cap),
+            ttl_ms,
+        }
     }
 
     fn fresh(&self, e: &CacheEntry, now_ms: f64) -> bool {
@@ -83,7 +92,13 @@ impl<K: Hash + Eq> TtlCache<K> {
 
     /// Insert or replace a cache entry.
     pub fn set(&mut self, key: K, value: String, now_ms: f64) {
-        self.entries.put(key, CacheEntry { value, inserted_at_ms: now_ms });
+        self.entries.put(
+            key,
+            CacheEntry {
+                value,
+                inserted_at_ms: now_ms,
+            },
+        );
     }
 
     /// Remove all expired entries. Returns how many were removed.

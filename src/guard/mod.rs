@@ -69,13 +69,20 @@ impl ContentGuard {
     /// Create a guard that blocks messages containing any term, anywhere.
     pub fn new(blocklist: Vec<String>) -> Self {
         let lowered = blocklist.iter().map(|t| t.to_lowercase()).collect();
-        Self { blocklist, lowered, whole_words: false }
+        Self {
+            blocklist,
+            lowered,
+            whole_words: false,
+        }
     }
 
     /// Create a guard that blocks only whole-word (or whole-phrase) matches:
     /// the characters on each side of the match must not be letters or digits.
     pub fn whole_words(blocklist: Vec<String>) -> Self {
-        Self { whole_words: true, ..Self::new(blocklist) }
+        Self {
+            whole_words: true,
+            ..Self::new(blocklist)
+        }
     }
 
     fn matches(&self, lower_text: &str, term: &str) -> bool {
@@ -142,7 +149,11 @@ impl Guard for LengthGuard {
     }
 
     fn check(&self, request: &ChatRequest) -> GuardResult {
-        let total: usize = request.messages.iter().map(|m| m.content.chars().count()).sum();
+        let total: usize = request
+            .messages
+            .iter()
+            .map(|m| m.content.chars().count())
+            .sum();
         if total > self.max_total_chars {
             GuardResult::Block {
                 reason: format!(
@@ -177,7 +188,10 @@ impl std::fmt::Debug for GuardChain {
     /// Lists the guards by [`Guard::name`], in order.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GuardChain")
-            .field("guards", &self.guards.iter().map(|g| g.name()).collect::<Vec<_>>())
+            .field(
+                "guards",
+                &self.guards.iter().map(|g| g.name()).collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -248,25 +262,37 @@ mod tests {
     #[test]
     fn test_content_guard_blocks_blocklisted_term() {
         let guard = ContentGuard::new(vec!["spam".into()]);
-        assert!(matches!(guard.check(&req("buy spam now")), GuardResult::Block { .. }));
+        assert!(matches!(
+            guard.check(&req("buy spam now")),
+            GuardResult::Block { .. }
+        ));
     }
 
     #[test]
     fn test_content_guard_case_insensitive() {
         let guard = ContentGuard::new(vec!["spam".into()]);
-        assert!(matches!(guard.check(&req("Buy SPAM Now")), GuardResult::Block { .. }));
+        assert!(matches!(
+            guard.check(&req("Buy SPAM Now")),
+            GuardResult::Block { .. }
+        ));
     }
 
     #[test]
     fn test_content_guard_allows_clean_request() {
         let guard = ContentGuard::new(vec!["spam".into()]);
-        assert!(matches!(guard.check(&req("hello world")), GuardResult::Allow));
+        assert!(matches!(
+            guard.check(&req("hello world")),
+            GuardResult::Allow
+        ));
     }
 
     #[test]
     fn test_length_guard_blocks_over_limit() {
         let guard = LengthGuard::new(5);
-        assert!(matches!(guard.check(&req("hello world")), GuardResult::Block { .. }));
+        assert!(matches!(
+            guard.check(&req("hello world")),
+            GuardResult::Block { .. }
+        ));
     }
 
     #[test]
@@ -317,8 +343,13 @@ mod tests {
 
     #[test]
     fn test_guard_chain_debug_lists_names_and_result_clones() {
-        let chain = GuardChain::new().add(ContentGuard::new(vec![])).add(LengthGuard::new(1));
-        assert_eq!(format!("{chain:?}"), r#"GuardChain { guards: ["content", "length"] }"#);
+        let chain = GuardChain::new()
+            .add(ContentGuard::new(vec![]))
+            .add(LengthGuard::new(1));
+        assert_eq!(
+            format!("{chain:?}"),
+            r#"GuardChain { guards: ["content", "length"] }"#
+        );
         let r = GuardResult::Block { reason: "x".into() };
         assert!(matches!(r.clone(), GuardResult::Block { reason } if reason == "x"));
     }
@@ -328,25 +359,51 @@ mod tests {
         // 0.1.x summed byte lengths, so 10 accented characters (20 bytes)
         // were blocked by a 10-character limit.
         let req = ChatRequest::new("m", vec![ChatMessage::new(Role::User, "\u{e9}".repeat(10))]);
-        assert!(matches!(LengthGuard::new(10).check(&req), GuardResult::Allow));
-        assert!(matches!(LengthGuard::new(9).check(&req), GuardResult::Block { .. }));
+        assert!(matches!(
+            LengthGuard::new(10).check(&req),
+            GuardResult::Allow
+        ));
+        assert!(matches!(
+            LengthGuard::new(9).check(&req),
+            GuardResult::Block { .. }
+        ));
     }
 
     #[test]
     fn test_whole_words_avoids_scunthorpe_problem() {
         let g = ContentGuard::whole_words(vec!["ass".into(), "credit card".into(), "café".into()]);
-        let check = |t: &str| matches!(g.check(&ChatRequest::new("m", vec![ChatMessage::new(Role::User, t)])), GuardResult::Block { .. });
+        let check = |t: &str| {
+            matches!(
+                g.check(&ChatRequest::new(
+                    "m",
+                    vec![ChatMessage::new(Role::User, t)]
+                )),
+                GuardResult::Block { .. }
+            )
+        };
         assert!(!check("this class is about assessment"));
         assert!(check("what an ASS."));
         assert!(check("my Credit Card number"));
         assert!(!check("creditcard"));
         assert!(check("Le CAFÉ, s'il vous plaît")); // Unicode lowercase
         assert!(!check("cafés")); // followed by a letter
-        // the substring guard still matches inside words, as before
+                                  // the substring guard still matches inside words, as before
         let sub = ContentGuard::new(vec!["ass".into()]);
-        assert!(matches!(sub.check(&ChatRequest::new("m", vec![ChatMessage::new(Role::User, "class")])), GuardResult::Block { .. }));
+        assert!(matches!(
+            sub.check(&ChatRequest::new(
+                "m",
+                vec![ChatMessage::new(Role::User, "class")]
+            )),
+            GuardResult::Block { .. }
+        ));
         // an empty term never matches
         let empty = ContentGuard::new(vec![String::new()]);
-        assert!(matches!(empty.check(&ChatRequest::new("m", vec![ChatMessage::new(Role::User, "x")])), GuardResult::Allow));
+        assert!(matches!(
+            empty.check(&ChatRequest::new(
+                "m",
+                vec![ChatMessage::new(Role::User, "x")]
+            )),
+            GuardResult::Allow
+        ));
     }
 }

@@ -1,6 +1,5 @@
 //! The README quickstart. Run with `cargo run --example quickstart`.
 
-use std::collections::HashMap;
 use llm_wasm::cache::{cache_key, TtlCache};
 use llm_wasm::cost::{pricing_for_model, CostLedger};
 use llm_wasm::format::JsonFormatter;
@@ -9,12 +8,14 @@ use llm_wasm::retry::RetryPolicy;
 use llm_wasm::routing::{Router, RoutingCondition, RoutingRule};
 use llm_wasm::template::TemplateEngine;
 use llm_wasm::types::{ChatMessage, ChatRequest, Role};
+use std::collections::HashMap;
 
 fn main() -> Result<(), llm_wasm::LlmWasmError> {
     // 1. Build the prompt.
     let mut vars = HashMap::new();
     vars.insert("city".to_string(), "Paris".to_string());
-    let prompt = TemplateEngine::new().render("Return JSON with the population of {{city}}.", &vars)?;
+    let prompt =
+        TemplateEngine::new().render("Return JSON with the population of {{city}}.", &vars)?;
     let request = ChatRequest::new("gpt-4o", vec![ChatMessage::new(Role::User, prompt)]);
 
     // 2. Guard it: blocked words, maximum length in characters.
@@ -25,7 +26,10 @@ fn main() -> Result<(), llm_wasm::LlmWasmError> {
 
     // 3. Pick a model.
     let mut router = Router::new("gpt-4o-mini");
-    router.add_rule(RoutingRule::new(RoutingCondition::MessageCountExceeds(10), "claude-sonnet-4-5"));
+    router.add_rule(RoutingRule::new(
+        RoutingCondition::MessageCountExceeds(10),
+        "claude-sonnet-4-5",
+    ));
     let model = router.route(&request).to_string();
 
     // 4. Check the cache (you supply the clock, e.g. Date.now() in JS).
@@ -45,7 +49,10 @@ fn main() -> Result<(), llm_wasm::LlmWasmError> {
     }
 
     // 6. Account for it (real per-model prices) and parse the answer.
-    println!("{model} costs ${} per million input tokens", pricing_for_model(&model)?.input_per_million);
+    println!(
+        "{model} costs ${} per million input tokens",
+        pricing_for_model(&model)?.input_per_million
+    );
     let mut ledger = CostLedger::with_budget(1.00);
     ledger.record(&model, 40, 20)?; // Err(BudgetExceeded) past $1.00
     let reply = cache.get(&key, now_ms).unwrap_or_default();

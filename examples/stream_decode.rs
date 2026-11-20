@@ -6,7 +6,8 @@
 
 use llm_wasm::stream::StreamDecoder;
 
-const OPENAI: &str = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n\
+const OPENAI: &str =
+    "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n\
 data: {\"choices\":[{\"delta\":{\"content\":\"Paris is \"}}]}\n\n\
 data: {\"choices\":[{\"delta\":{\"content\":\"the capital.\"},\"finish_reason\":\"stop\"}]}\n\n\
 data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":5}}\n\n\
@@ -28,7 +29,11 @@ fn main() -> Result<(), llm_wasm::LlmWasmError> {
                 print!("{}", chunk.delta);
             }
         }
-        println!("  [finished: {}, usage: {:?}]", decoder.is_finished(), decoder.usage());
+        println!(
+            "  [finished: {}, usage: {:?}]",
+            decoder.is_finished(),
+            decoder.usage()
+        );
     }
     Ok(())
 }

@@ -61,12 +61,20 @@ impl RetryPolicy {
                 reason: "must not exceed max_delay_ms".into(),
             });
         }
-        Ok(Self { max_attempts, base_delay_ms, max_delay_ms })
+        Ok(Self {
+            max_attempts,
+            base_delay_ms,
+            max_delay_ms,
+        })
     }
 
     /// Sensible default: 3 attempts, 100 ms base, 5 000 ms max.
     pub fn exponential() -> Self {
-        Self { max_attempts: 3, base_delay_ms: 100, max_delay_ms: 5_000 }
+        Self {
+            max_attempts: 3,
+            base_delay_ms: 100,
+            max_delay_ms: 5_000,
+        }
     }
 
     /// Compute the delay in milliseconds for the given attempt number (1-indexed).
@@ -108,7 +116,11 @@ impl RetryPolicy {
         let capped = u64::from(self.base_delay_ms)
             .saturating_mul(1u64 << exp)
             .min(u64::from(self.max_delay_ms));
-        let r = if random_unit.is_finite() { random_unit.clamp(0.0, 1.0) } else { 0.5 };
+        let r = if random_unit.is_finite() {
+            random_unit.clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
         let half = capped as f64 / 2.0;
         (half + half * r).round().min(f64::from(self.max_delay_ms)) as u32
     }
@@ -120,7 +132,12 @@ impl RetryPolicy {
     /// (`"120"`) is understood, because this crate has no clock to compare an
     /// HTTP date against; for a date, or no header, the jittered backoff is
     /// used. A server-requested delay is not capped by `max_delay_ms`.
-    pub fn delay_for_response(&self, attempt: u32, retry_after: Option<&str>, random_unit: f64) -> u32 {
+    pub fn delay_for_response(
+        &self,
+        attempt: u32,
+        retry_after: Option<&str>,
+        random_unit: f64,
+    ) -> u32 {
         match retry_after.and_then(parse_retry_after_seconds) {
             Some(secs) => secs.saturating_mul(1000),
             None => self.delay_with_jitter(attempt, random_unit),
@@ -168,13 +185,17 @@ mod tests {
     #[test]
     fn test_retry_policy_new_zero_attempts_err() {
         let result = RetryPolicy::new(0, 100, 5_000);
-        assert!(matches!(result, Err(LlmWasmError::InvalidConfig { field, .. }) if field == "max_attempts"));
+        assert!(
+            matches!(result, Err(LlmWasmError::InvalidConfig { field, .. }) if field == "max_attempts")
+        );
     }
 
     #[test]
     fn test_retry_policy_new_base_exceeds_max_err() {
         let result = RetryPolicy::new(3, 6_000, 5_000);
-        assert!(matches!(result, Err(LlmWasmError::InvalidConfig { field, .. }) if field == "base_delay_ms"));
+        assert!(
+            matches!(result, Err(LlmWasmError::InvalidConfig { field, .. }) if field == "base_delay_ms")
+        );
     }
 
     #[test]
@@ -232,7 +253,7 @@ mod tests {
     #[test]
     fn test_retry_policy_should_not_retry_beyond_max() {
         let p = RetryPolicy::exponential(); // max_attempts = 3
-        // attempt 3 is the last; no more retries after it
+                                            // attempt 3 is the last; no more retries after it
         assert!(!p.should_retry(3, 429));
     }
 
@@ -262,7 +283,10 @@ mod tests {
         assert_eq!(p.delay_for_response(1, Some("7"), 0.0), 7_000);
         assert_eq!(p.delay_for_response(1, Some(" 2 "), 0.0), 2_000);
         // HTTP-date and junk fall back to backoff.
-        assert_eq!(p.delay_for_response(1, Some("Wed, 21 Oct 2026 07:28:00 GMT"), 0.0), 50);
+        assert_eq!(
+            p.delay_for_response(1, Some("Wed, 21 Oct 2026 07:28:00 GMT"), 0.0),
+            50
+        );
         assert_eq!(p.delay_for_response(1, Some("-3"), 0.0), 50);
         assert_eq!(p.delay_for_response(1, None, 1.0), 100);
         assert_eq!(parse_retry_after_seconds("120"), Some(120));

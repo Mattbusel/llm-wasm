@@ -52,7 +52,9 @@ fn to_js<T: Serialize>(v: &T) -> Result<JsValue, JsError> {
 /// Cost in USD of a call to `model` with the given token counts.
 #[wasm_bindgen(js_name = estimateCost)]
 pub fn estimate_cost(model: &str, input_tokens: u32, output_tokens: u32) -> Result<f64, JsError> {
-    Ok(pricing_for_model(model).map_err(js_err)?.cost_usd(input_tokens, output_tokens))
+    Ok(pricing_for_model(model)
+        .map_err(js_err)?
+        .cost_usd(input_tokens, output_tokens))
 }
 
 /// Every model name in the built-in price table.
@@ -76,7 +78,11 @@ pub fn strip_code_fence(text: &str) -> String {
 /// Render a `{{variable}}` / `{{>partial}}` template. `vars` and `partials`
 /// are plain objects of strings; `partials` may be omitted.
 #[wasm_bindgen(js_name = renderTemplate)]
-pub fn render_template(template: &str, vars: JsValue, partials: JsValue) -> Result<String, JsError> {
+pub fn render_template(
+    template: &str,
+    vars: JsValue,
+    partials: JsValue,
+) -> Result<String, JsError> {
     let vars: HashMap<String, String> = from_js(vars, "vars")?;
     let mut engine = TemplateEngine::new();
     if !partials.is_undefined() && !partials.is_null() {
@@ -91,7 +97,11 @@ pub fn render_template(template: &str, vars: JsValue, partials: JsValue) -> Resu
 /// Throw if `request` (`{model, messages: [{role, content}], ...}`) contains a
 /// blocked term (case-insensitive) or more than `maxChars` characters.
 #[wasm_bindgen(js_name = checkRequest)]
-pub fn check_request(request: JsValue, blocklist: Vec<String>, max_chars: usize) -> Result<(), JsError> {
+pub fn check_request(
+    request: JsValue,
+    blocklist: Vec<String>,
+    max_chars: usize,
+) -> Result<(), JsError> {
     let request: ChatRequest = from_js(request, "request")?;
     GuardChain::new()
         .add(ContentGuard::new(blocklist))
@@ -125,13 +135,22 @@ impl Ledger {
     /// `new Ledger()` for no limit, `new Ledger(1.5)` for a $1.50 budget.
     #[wasm_bindgen(constructor)]
     pub fn new(budget_usd: Option<f64>) -> Ledger {
-        Ledger { inner: budget_usd.map_or_else(CostLedger::new, CostLedger::with_budget) }
+        Ledger {
+            inner: budget_usd.map_or_else(CostLedger::new, CostLedger::with_budget),
+        }
     }
 
     /// Record a call; returns the new total. Throws for an unknown model or
     /// when the budget would be exceeded (nothing is recorded then).
-    pub fn record(&mut self, model: &str, input_tokens: u32, output_tokens: u32) -> Result<f64, JsError> {
-        self.inner.record(model, input_tokens, output_tokens).map_err(js_err)
+    pub fn record(
+        &mut self,
+        model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+    ) -> Result<f64, JsError> {
+        self.inner
+            .record(model, input_tokens, output_tokens)
+            .map_err(js_err)
     }
 
     /// Record a known dollar amount; returns the new total.
@@ -164,7 +183,9 @@ impl Retry {
     /// `new Retry(maxAttempts, baseDelayMs, maxDelayMs)`. Throws on invalid values.
     #[wasm_bindgen(constructor)]
     pub fn new(max_attempts: u32, base_delay_ms: u32, max_delay_ms: u32) -> Result<Retry, JsError> {
-        Ok(Retry { inner: RetryPolicy::new(max_attempts, base_delay_ms, max_delay_ms).map_err(js_err)? })
+        Ok(Retry {
+            inner: RetryPolicy::new(max_attempts, base_delay_ms, max_delay_ms).map_err(js_err)?,
+        })
     }
 
     /// True if attempt number `attempt` (1-based) failed with a status worth retrying.
@@ -176,7 +197,8 @@ impl Retry {
     /// Milliseconds to wait. Pass `Math.random()` and the response's
     /// `Retry-After` header (or `null`).
     pub fn delay(&self, attempt: u32, random_unit: f64, retry_after: Option<String>) -> u32 {
-        self.inner.delay_for_response(attempt, retry_after.as_deref(), random_unit)
+        self.inner
+            .delay_for_response(attempt, retry_after.as_deref(), random_unit)
     }
 }
 
@@ -276,14 +298,20 @@ impl JsStreamDecoder {
     /// A new decoder.
     #[wasm_bindgen(constructor)]
     pub fn new() -> JsStreamDecoder {
-        JsStreamDecoder { inner: crate::stream::StreamDecoder::new() }
+        JsStreamDecoder {
+            inner: crate::stream::StreamDecoder::new(),
+        }
     }
 
     /// Feed the next bytes of the body (a `Uint8Array`); returns the text
     /// deltas they completed. Throws on malformed events or provider errors.
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>, JsError> {
         let chunks = self.inner.push(bytes).map_err(js_err)?;
-        Ok(chunks.into_iter().map(|c| c.delta).filter(|d| !d.is_empty()).collect())
+        Ok(chunks
+            .into_iter()
+            .map(|c| c.delta)
+            .filter(|d| !d.is_empty())
+            .collect())
     }
 
     /// True once the stream ended (`[DONE]` or `message_stop`).

@@ -102,7 +102,12 @@ fn scan(input: &str) -> Scan {
         // a lone backslash at the very end of a cut-off string
         out.pop();
     }
-    Scan { out, stack, open_quote: quote, commas }
+    Scan {
+        out,
+        stack,
+        open_quote: quote,
+        commas,
+    }
 }
 
 fn close(mut text: String, stack: &[u8]) -> String {
@@ -124,7 +129,9 @@ fn close(mut text: String, stack: &[u8]) -> String {
 }
 
 fn parse(text: &str) -> Option<serde_json::Value> {
-    json5::from_str::<serde_json::Value>(text).ok().filter(|v| v.is_object() || v.is_array())
+    json5::from_str::<serde_json::Value>(text)
+        .ok()
+        .filter(|v| v.is_object() || v.is_array())
 }
 
 /// Repair and parse one candidate that starts at `{` or `[`.
@@ -154,13 +161,25 @@ mod tests {
     fn closes_and_trims() {
         assert_eq!(close("{\"a\": 1,".into(), b"{"), "{\"a\": 1}");
         assert_eq!(close("[1, [2".into(), b"[["), "[1, [2]]");
-        assert_eq!(repair("{\"a\": {\"b\": 1, \"c"), Some(serde_json::json!({"a": {"b": 1}})));
-        assert_eq!(repair("{\"a\": {\"b\": 1, \"c\": "), Some(serde_json::json!({"a": {"b": 1}})));
-        assert_eq!(repair("{\"s\": \"ends in backslash \\"), Some(serde_json::json!({"s": "ends in backslash "})));
+        assert_eq!(
+            repair("{\"a\": {\"b\": 1, \"c"),
+            Some(serde_json::json!({"a": {"b": 1}}))
+        );
+        assert_eq!(
+            repair("{\"a\": {\"b\": 1, \"c\": "),
+            Some(serde_json::json!({"a": {"b": 1}}))
+        );
+        assert_eq!(
+            repair("{\"s\": \"ends in backslash \\"),
+            Some(serde_json::json!({"s": "ends in backslash "}))
+        );
     }
 
     #[test]
     fn python_words_only_outside_strings() {
-        assert_eq!(repair("{'a': True, 'b': 'None of it', 'Nonesuch': None}"), Some(serde_json::json!({"a": true, "b": "None of it", "Nonesuch": null})));
+        assert_eq!(
+            repair("{'a': True, 'b': 'None of it', 'Nonesuch': None}"),
+            Some(serde_json::json!({"a": true, "b": "None of it", "Nonesuch": null}))
+        );
     }
 }

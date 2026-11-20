@@ -14,7 +14,10 @@ const LLAMA3: &str = "{% set loop_messages = messages %}{% for message in loop_m
 fn main() -> Result<(), llm_wasm::LlmWasmError> {
     let messages = vec![
         ChatMessage::new(Role::System, "You are a terse assistant."),
-        ChatMessage::new(Role::User, "My key is sk-proj-AbCdEf0123456789XyZ0123456789. Is it valid?"),
+        ChatMessage::new(
+            Role::User,
+            "My key is sk-proj-AbCdEf0123456789XyZ0123456789. Is it valid?",
+        ),
     ];
 
     // Redact secrets and refuse whole-word blocklisted terms before anything leaves.
@@ -24,7 +27,13 @@ fn main() -> Result<(), llm_wasm::LlmWasmError> {
     let request = ChatRequest::new("llama-3-8b", messages);
     let request = guards.check(&request)?.unwrap_or(request);
 
-    let prompt = render_chat_template(LLAMA3, &request.messages, true, "<|begin_of_text|>", "<|eot_id|>")?;
+    let prompt = render_chat_template(
+        LLAMA3,
+        &request.messages,
+        true,
+        "<|begin_of_text|>",
+        "<|eot_id|>",
+    )?;
     println!("{prompt}");
     Ok(())
 }

@@ -42,7 +42,9 @@ impl Default for TemplateEngine {
 impl TemplateEngine {
     /// Create a new engine with no registered partials.
     pub fn new() -> Self {
-        Self { partials: HashMap::new() }
+        Self {
+            partials: HashMap::new(),
+        }
     }
 
     /// Register a named partial template.
@@ -96,9 +98,9 @@ impl TemplateEngine {
             output.push_str(&remaining[..open]);
             remaining = &remaining[open + 2..];
 
-            let close = remaining.find("}}").ok_or_else(|| {
-                LlmWasmError::TemplateError("unclosed '{{' tag".into())
-            })?;
+            let close = remaining
+                .find("}}")
+                .ok_or_else(|| LlmWasmError::TemplateError("unclosed '{{' tag".into()))?;
 
             let tag = &remaining[..close];
             remaining = &remaining[close + 2..];
@@ -106,9 +108,7 @@ impl TemplateEngine {
             if let Some(partial_name) = tag.strip_prefix('>') {
                 let partial_name = partial_name.trim();
                 let partial_body = self.partials.get(partial_name).ok_or_else(|| {
-                    LlmWasmError::TemplateError(format!(
-                        "unknown partial '>{partial_name}'"
-                    ))
+                    LlmWasmError::TemplateError(format!("unknown partial '>{partial_name}'"))
                 })?;
                 // Recursively render the partial with the same context
                 let rendered = self.render_depth(partial_body, context, depth + 1)?;
@@ -166,9 +166,15 @@ fn jinja_env() -> minijinja::Environment<'static> {
     // Python string methods ("x".strip(), .split(), dict.items(), ...) that
     // Hugging Face chat templates use.
     env.set_unknown_method_callback(minijinja_contrib::pycompat::unknown_method_callback);
-    env.add_function("raise_exception", |msg: String| -> Result<String, minijinja::Error> {
-        Err(minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, msg))
-    });
+    env.add_function(
+        "raise_exception",
+        |msg: String| -> Result<String, minijinja::Error> {
+            Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                msg,
+            ))
+        },
+    );
     env.set_fuel(Some(5_000_000));
     env
 }
@@ -219,13 +225,18 @@ mod tests {
     use super::*;
 
     fn ctx(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
     fn test_template_render_substitutes_variable() {
         let engine = TemplateEngine::new();
-        let out = engine.render("Hello, {{name}}!", &ctx(&[("name", "Alice")])).unwrap();
+        let out = engine
+            .render("Hello, {{name}}!", &ctx(&[("name", "Alice")]))
+            .unwrap();
         assert_eq!(out, "Hello, Alice!");
     }
 
@@ -295,8 +306,14 @@ mod tests {
         engine.register_partial("a", "{{>b}}");
         engine.register_partial("b", "{{>a}}");
         let ctx = HashMap::new();
-        assert!(matches!(engine.render("{{>loop}}", &ctx), Err(LlmWasmError::TemplateError(_))));
-        assert!(matches!(engine.render("{{>a}}", &ctx), Err(LlmWasmError::TemplateError(_))));
+        assert!(matches!(
+            engine.render("{{>loop}}", &ctx),
+            Err(LlmWasmError::TemplateError(_))
+        ));
+        assert!(matches!(
+            engine.render("{{>a}}", &ctx),
+            Err(LlmWasmError::TemplateError(_))
+        ));
         // Legitimate nesting still works.
         engine.register_partial("outer", "[{{>inner}}]");
         engine.register_partial("inner", "x");
@@ -321,7 +338,9 @@ mod tests {
 
         #[test]
         fn llama3_template() {
-            let out = render_chat_template(LLAMA3, &convo(), true, "<|begin_of_text|>", "<|eot_id|>").unwrap();
+            let out =
+                render_chat_template(LLAMA3, &convo(), true, "<|begin_of_text|>", "<|eot_id|>")
+                    .unwrap();
             assert_eq!(
                 out,
                 "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\nWhat is 2+2?<|eot_id|>\
@@ -334,20 +353,37 @@ mod tests {
         #[test]
         fn mistral_template_and_raise_exception() {
             let out = render_chat_template(MISTRAL, &convo(), false, "<s>", "</s>").unwrap();
-            assert_eq!(out, "<s>[INST]   What is 2+2?  [/INST]4</s>[INST] And 3+3? [/INST]");
-            let bad = vec![ChatMessage::new(Role::User, "a"), ChatMessage::new(Role::User, "b")];
+            assert_eq!(
+                out,
+                "<s>[INST]   What is 2+2?  [/INST]4</s>[INST] And 3+3? [/INST]"
+            );
+            let bad = vec![
+                ChatMessage::new(Role::User, "a"),
+                ChatMessage::new(Role::User, "b"),
+            ];
             let err = render_chat_template(MISTRAL, &bad, false, "<s>", "</s>").unwrap_err();
             assert!(err.to_string().contains("roles must alternate"), "{err}");
         }
 
         #[test]
         fn python_methods_and_errors() {
-            let out = render_jinja("{{ x.strip().upper() }}|{{ ', '.join(xs) }}", &serde_json::json!({"x": " hi ", "xs": ["a", "b"]})).unwrap();
+            let out = render_jinja(
+                "{{ x.strip().upper() }}|{{ ', '.join(xs) }}",
+                &serde_json::json!({"x": " hi ", "xs": ["a", "b"]}),
+            )
+            .unwrap();
             assert_eq!(out, "HI|a, b");
             assert!(render_jinja("{% for %}", &serde_json::json!({})).is_err());
-            assert_eq!(render_jinja("[{{ missing }}]", &serde_json::json!({})).unwrap(), "[]");
+            assert_eq!(
+                render_jinja("[{{ missing }}]", &serde_json::json!({})).unwrap(),
+                "[]"
+            );
             // a runaway template stops instead of hanging
-            assert!(render_jinja("{% for i in range(100000) %}{% for j in range(100000) %}x{% endfor %}{% endfor %}", &serde_json::json!({})).is_err());
+            assert!(render_jinja(
+                "{% for i in range(100000) %}{% for j in range(100000) %}x{% endfor %}{% endfor %}",
+                &serde_json::json!({})
+            )
+            .is_err());
         }
     }
 }

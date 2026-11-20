@@ -149,7 +149,9 @@ impl ModelPricing {
             input_per_million: price.input?,
             output_per_million: price.output.unwrap_or(0.0),
             cache_read_per_million: price.cache_read,
-            cache_write_per_million: price.cache_write("5m").or_else(|| price.cache_write.first().map(|&(_, usd)| usd)),
+            cache_write_per_million: price
+                .cache_write("5m")
+                .or_else(|| price.cache_write.first().map(|&(_, usd)| usd)),
             max_input_tokens: None,
         })
     }
@@ -157,7 +159,10 @@ impl ModelPricing {
     /// Compute the USD cost for plain input and output token counts (no
     /// prompt caching). Same as `cost(&Usage::new(input, output))`.
     pub fn cost_usd(&self, input_tokens: u32, output_tokens: u32) -> f64 {
-        self.cost(&Usage::new(u64::from(input_tokens), u64::from(output_tokens)))
+        self.cost(&Usage::new(
+            u64::from(input_tokens),
+            u64::from(output_tokens),
+        ))
     }
 
     /// Compute the USD cost of a call from its [`Usage`].
@@ -169,8 +174,16 @@ impl ModelPricing {
     pub fn cost(&self, usage: &Usage) -> f64 {
         let per = |tokens: u64, usd_per_million: f64| tokens as f64 * usd_per_million / 1_000_000.0;
         per(usage.input, self.input_per_million)
-            + per(usage.cache_read, self.cache_read_per_million.unwrap_or(self.input_per_million))
-            + per(usage.cache_write, self.cache_write_per_million.unwrap_or(self.input_per_million))
+            + per(
+                usage.cache_read,
+                self.cache_read_per_million
+                    .unwrap_or(self.input_per_million),
+            )
+            + per(
+                usage.cache_write,
+                self.cache_write_per_million
+                    .unwrap_or(self.input_per_million),
+            )
             + per(usage.output, self.output_per_million)
             + per(usage.reasoning, self.output_per_million)
     }
@@ -192,7 +205,11 @@ fn from_row(row: &data::Row) -> ModelPricing {
 /// The built-in table's row for `model`.
 fn builtin(model: &str) -> Option<ModelPricing> {
     let rows = data::ROWS;
-    let find = |name: &str| rows.binary_search_by(|row| row.0.cmp(name)).ok().map(|i| from_row(&rows[i]));
+    let find = |name: &str| {
+        rows.binary_search_by(|row| row.0.cmp(name))
+            .ok()
+            .map(|i| from_row(&rows[i]))
+    };
     find(model).or_else(|| model.split_once('/').and_then(|(_, bare)| find(bare)))
 }
 
@@ -261,7 +278,9 @@ pub fn cost_for_model(model: &str, usage: &Usage) -> Result<f64, LlmWasmError> {
             cache_write_5m: usage.cache_write,
             ..llm_prices::Usage::default()
         };
-        return Ok(row.cost_usage(&lp).map_or_else(|| pricing.cost(usage), |c| c.total));
+        return Ok(row
+            .cost_usage(&lp)
+            .map_or_else(|| pricing.cost(usage), |c| c.total));
     }
     Ok(pricing_for_model(model)?.cost(usage))
 }
@@ -310,7 +329,10 @@ impl CostLedger {
     /// # Arguments
     /// * `budget_usd`: maximum allowed spend in USD
     pub fn with_budget(budget_usd: f64) -> Self {
-        Self { budget_usd: Some(budget_usd), ..Self::default() }
+        Self {
+            budget_usd: Some(budget_usd),
+            ..Self::default()
+        }
     }
 
     /// Record a completed request and its token usage. Returns the new total.
@@ -319,8 +341,16 @@ impl CostLedger {
     /// Returns [`LlmWasmError::UnknownModel`] for models not in the table.
     /// Returns [`LlmWasmError::BudgetExceeded`] if recording this usage would
     /// push total spend over the budget (nothing is recorded in that case).
-    pub fn record(&mut self, model: &str, input_tokens: u32, output_tokens: u32) -> Result<f64, LlmWasmError> {
-        let cost = cost_for_model(model, &Usage::new(u64::from(input_tokens), u64::from(output_tokens)))?;
+    pub fn record(
+        &mut self,
+        model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+    ) -> Result<f64, LlmWasmError> {
+        let cost = cost_for_model(
+            model,
+            &Usage::new(u64::from(input_tokens), u64::from(output_tokens)),
+        )?;
         self.record_usd(cost)
     }
 
@@ -357,7 +387,10 @@ impl CostLedger {
         let new_total = self.total_usd + cost_usd;
         if let Some(budget) = self.budget_usd {
             if new_total > budget {
-                return Err(LlmWasmError::BudgetExceeded { used: new_total, limit: budget });
+                return Err(LlmWasmError::BudgetExceeded {
+                    used: new_total,
+                    limit: budget,
+                });
             }
         }
         self.total_usd = new_total;
@@ -492,7 +525,9 @@ mod tests {
     fn test_cost_ledger_no_budget_never_exceeded() {
         let mut ledger = CostLedger::new();
         // Record 100M tokens of the most expensive model
-        ledger.record("claude-opus-4-6", 100_000_000, 100_000_000).unwrap();
+        ledger
+            .record("claude-opus-4-6", 100_000_000, 100_000_000)
+            .unwrap();
         assert!(!ledger.exceeded_budget());
     }
 
@@ -514,7 +549,10 @@ mod tests {
             "gpt-4o",
             "gpt-4o-mini",
         ] {
-            assert!(pricing_for_model(model).is_ok(), "expected pricing for {model}");
+            assert!(
+                pricing_for_model(model).is_ok(),
+                "expected pricing for {model}"
+            );
         }
     }
 
@@ -529,16 +567,32 @@ mod tests {
     fn test_rows_map_to_pricing_fields() {
         let opus = pricing_for_model("claude-opus-5-5").unwrap();
         assert_eq!(opus.provider, "anthropic");
-        assert_eq!((opus.input_per_million, opus.output_per_million), (4.0, 20.0));
-        assert_eq!((opus.cache_read_per_million, opus.cache_write_per_million), (Some(0.2), Some(5.0)));
+        assert_eq!(
+            (opus.input_per_million, opus.output_per_million),
+            (4.0, 20.0)
+        );
+        assert_eq!(
+            (opus.cache_read_per_million, opus.cache_write_per_million),
+            (Some(0.2), Some(5.0))
+        );
         assert_eq!(opus.max_input_tokens, Some(1_000_000));
         // NaN in the table means "not listed"
         let gpt = pricing_for_model("gpt-4o").unwrap();
-        assert_eq!((gpt.provider, gpt.cache_read_per_million, gpt.cache_write_per_million), ("openai", Some(1.25), None));
+        assert_eq!(
+            (
+                gpt.provider,
+                gpt.cache_read_per_million,
+                gpt.cache_write_per_million
+            ),
+            ("openai", Some(1.25), None)
+        );
         // every row converts without NaN leaking out
         for m in known_models() {
             let p = pricing_for_model(m).unwrap();
-            assert!(p.input_per_million.is_finite() && p.output_per_million.is_finite(), "{m}");
+            assert!(
+                p.input_per_million.is_finite() && p.output_per_million.is_finite(),
+                "{m}"
+            );
             assert!(p.cache_read_per_million.is_none_or(f64::is_finite), "{m}");
             assert!(p.cache_write_per_million.is_none_or(f64::is_finite), "{m}");
             assert!(!p.provider.is_empty(), "{m}");
@@ -549,11 +603,19 @@ mod tests {
     fn test_cost_fallbacks_and_reasoning() {
         let plain = ModelPricing::new(2.0, 8.0);
         // no cache prices listed: cached tokens are billed as input
-        let u = Usage::new(0, 0).with_cache_read(1_000_000).with_cache_write(1_000_000);
+        let u = Usage::new(0, 0)
+            .with_cache_read(1_000_000)
+            .with_cache_write(1_000_000);
         assert!((plain.cost(&u) - 4.0).abs() < 1e-12);
         // reasoning is billed at the output price
-        assert!((plain.cost(&Usage::new(0, 1_000_000).with_reasoning(1_000_000)) - 16.0).abs() < 1e-12);
-        let cached = plain.with_cache_read(0.5).with_cache_write(2.5).with_provider("x").with_max_input_tokens(9);
+        assert!(
+            (plain.cost(&Usage::new(0, 1_000_000).with_reasoning(1_000_000)) - 16.0).abs() < 1e-12
+        );
+        let cached = plain
+            .with_cache_read(0.5)
+            .with_cache_write(2.5)
+            .with_provider("x")
+            .with_max_input_tokens(9);
         assert!((cached.cost(&u) - 3.0).abs() < 1e-12);
         assert_eq!((cached.provider, cached.max_input_tokens), ("x", Some(9)));
         assert_eq!(plain.cost(&Usage::default()), 0.0);
@@ -564,9 +626,15 @@ mod tests {
         // 0.1.x listed claude-opus-4-6 at $15/$75 and claude-haiku-4-5 at
         // $0.80/$4 per million tokens; Anthropic's prices are $5/$25 and $1/$5.
         let opus = pricing_for_model("claude-opus-4-6").unwrap();
-        assert_eq!((opus.input_per_million, opus.output_per_million), (5.0, 25.0));
+        assert_eq!(
+            (opus.input_per_million, opus.output_per_million),
+            (5.0, 25.0)
+        );
         let haiku = pricing_for_model("claude-haiku-4-5-20251001").unwrap();
-        assert_eq!((haiku.input_per_million, haiku.output_per_million), (1.0, 5.0));
+        assert_eq!(
+            (haiku.input_per_million, haiku.output_per_million),
+            (1.0, 5.0)
+        );
         let gpt = pricing_for_model("gpt-4o").unwrap();
         assert_eq!((gpt.input_per_million, gpt.output_per_million), (2.5, 10.0));
     }
@@ -581,7 +649,10 @@ mod tests {
 
     #[test]
     fn test_provider_prefix_and_other_vendors() {
-        assert_eq!(pricing_for_model("anthropic/claude-sonnet-4-5").unwrap(), pricing_for_model("claude-sonnet-4-5").unwrap());
+        assert_eq!(
+            pricing_for_model("anthropic/claude-sonnet-4-5").unwrap(),
+            pricing_for_model("claude-sonnet-4-5").unwrap()
+        );
         assert!(known_models().any(|m| m.starts_with("gemini-")));
         assert!(known_models().any(|m| m.starts_with("mistral-")));
         assert!(pricing_for_model("nobody/nothing").is_err());
@@ -593,7 +664,10 @@ mod tests {
         assert!((ledger.record_usd(0.4).unwrap() - 0.4).abs() < 1e-12);
         assert!(ledger.record_usd(-1.0).is_err());
         assert!(ledger.record_usd(f64::NAN).is_err());
-        assert!(matches!(ledger.record_usd(0.7), Err(LlmWasmError::BudgetExceeded { .. })));
+        assert!(matches!(
+            ledger.record_usd(0.7),
+            Err(LlmWasmError::BudgetExceeded { .. })
+        ));
         assert!((ledger.remaining_usd().unwrap() - 0.6).abs() < 1e-12);
         assert_eq!(ledger.entry_count(), 1);
         assert_eq!(CostLedger::new().remaining_usd(), None);
@@ -605,7 +679,10 @@ mod tests {
         assert_eq!(ledger.budget_usd(), Some(0.10));
         ledger.record_paid_usd(0.08).unwrap();
         // record_usd refuses what would cross the budget...
-        assert!(matches!(ledger.record_usd(0.05), Err(LlmWasmError::BudgetExceeded { .. })));
+        assert!(matches!(
+            ledger.record_usd(0.05),
+            Err(LlmWasmError::BudgetExceeded { .. })
+        ));
         // ...record_paid_usd books it, because it was already paid
         assert!((ledger.record_paid_usd(0.05).unwrap() - 0.13).abs() < 1e-12);
         assert!(ledger.exceeded_budget());
@@ -619,12 +696,17 @@ mod tests {
 
     #[test]
     fn test_cost_for_model_matches_ledger_and_errors() {
-        let u = Usage::new(3_000, 1_200).with_cache_read(180_000).with_cache_write(20_000);
+        let u = Usage::new(3_000, 1_200)
+            .with_cache_read(180_000)
+            .with_cache_write(20_000);
         let usd = cost_for_model("claude-opus-5-5", &u).unwrap();
         assert!((usd - pricing_for_model("claude-opus-5-5").unwrap().cost(&u)).abs() < 1e-12);
         let mut ledger = CostLedger::new();
         assert!((ledger.record_usage("claude-opus-5-5", &u).unwrap() - usd).abs() < 1e-12);
-        assert!(matches!(cost_for_model("no-such-model", &u), Err(LlmWasmError::UnknownModel(_))));
+        assert!(matches!(
+            cost_for_model("no-such-model", &u),
+            Err(LlmWasmError::UnknownModel(_))
+        ));
     }
 
     #[cfg(feature = "llm-prices")]
@@ -644,7 +726,12 @@ mod tests {
             assert!((ledger.record("gpt-5.4", 300_000, 1_000).unwrap() - usd).abs() < 1e-12);
             // below the threshold both agree
             let short = Usage::new(1_000, 1_000).with_reasoning(500);
-            assert!((cost_for_model("gpt-5.4", &short).unwrap() - pricing_for_model("gpt-5.4").unwrap().cost(&short)).abs() < 1e-12);
+            assert!(
+                (cost_for_model("gpt-5.4", &short).unwrap()
+                    - pricing_for_model("gpt-5.4").unwrap().cost(&short))
+                .abs()
+                    < 1e-12
+            );
         }
 
         #[test]
@@ -674,10 +761,18 @@ mod tests {
 
         #[test]
         fn from_llm_prices_maps_fields() {
-            let haiku = ModelPricing::from_llm_prices(llm_prices::lookup("claude-haiku-4-5").unwrap()).unwrap();
-            assert_eq!((haiku.cache_read_per_million, haiku.cache_write_per_million), (Some(0.1), Some(1.25)));
+            let haiku =
+                ModelPricing::from_llm_prices(llm_prices::lookup("claude-haiku-4-5").unwrap())
+                    .unwrap();
+            assert_eq!(
+                (haiku.cache_read_per_million, haiku.cache_write_per_million),
+                (Some(0.1), Some(1.25))
+            );
             assert_eq!(haiku.max_input_tokens, None);
-            let embed = ModelPricing::from_llm_prices(llm_prices::lookup("text-embedding-3-small").unwrap()).unwrap();
+            let embed = ModelPricing::from_llm_prices(
+                llm_prices::lookup("text-embedding-3-small").unwrap(),
+            )
+            .unwrap();
             assert_eq!(embed.output_per_million, 0.0);
             let mut no_input = *llm_prices::lookup("gpt-4o").unwrap();
             no_input.input = None;

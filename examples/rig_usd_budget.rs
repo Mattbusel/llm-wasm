@@ -26,15 +26,24 @@ use rig_agent::test_utils::{MockAddTool, MockCompletionModel, MockTurn};
 /// A tool-calling turn: 40,000 prompt tokens, 30,000 of them read from the
 /// prompt cache, and 800 completion tokens.
 fn paid_turn(id: &str) -> MockTurn {
-    MockTurn::tool_call(id, "add", serde_json::json!({"x": 1, "y": 2}))
-        .with_usage(Usage::new().input_tokens(40_000).cached_input_tokens(30_000).output_tokens(800))
+    MockTurn::tool_call(id, "add", serde_json::json!({"x": 1, "y": 2})).with_usage(
+        Usage::new()
+            .input_tokens(40_000)
+            .cached_input_tokens(30_000)
+            .output_tokens(800),
+    )
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     // $0.15 for the whole team.
     let ledger = Arc::new(Mutex::new(CostLedger::with_budget(0.15)));
-    let spent = || ledger.lock().unwrap_or_else(PoisonError::into_inner).total_usd();
+    let spent = || {
+        ledger
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .total_usd()
+    };
 
     // Agent 1 wants six paid turns on claude-sonnet-4-5; the budget covers fewer.
     let researcher = AgentBuilder::new(MockCompletionModel::from_turns([
@@ -47,7 +56,10 @@ async fn main() {
         MockTurn::text("done"),
     ]))
     .tool(MockAddTool)
-    .add_hook(CostLedgerHook::with_ledger(ledger.clone(), "claude-sonnet-4-5"))
+    .add_hook(CostLedgerHook::with_ledger(
+        ledger.clone(),
+        "claude-sonnet-4-5",
+    ))
     .build();
 
     match researcher.prompt("research the topic").max_turns(10).await {
@@ -66,5 +78,10 @@ async fn main() {
     }
 
     let guard = ledger.lock().unwrap_or_else(PoisonError::into_inner);
-    println!("{} paid turns, ${:.4} total, over budget: {}", guard.entry_count(), guard.total_usd(), guard.exceeded_budget());
+    println!(
+        "{} paid turns, ${:.4} total, over budget: {}",
+        guard.entry_count(),
+        guard.total_usd(),
+        guard.exceeded_budget()
+    );
 }

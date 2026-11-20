@@ -16,20 +16,33 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 fn json(c: &mut Criterion) {
     let mut g = c.benchmark_group("extract_json");
-    let answer = format!("Sure! Here is the data you asked for:\n```json\n{}\n```\nLet me know.", serde_json::json!({
-        "cities": (0..50).map(|i| serde_json::json!({"name": format!("city {i}"), "pop": i * 1000})).collect::<Vec<_>>()
-    }));
-    g.bench_function("chatty answer / 0.2", |b| b.iter(|| black_box(llm_wasm::format::JsonFormatter::extract_json(&answer).unwrap())));
-    g.bench_function("chatty answer / 0.1.1", |b| b.iter(|| black_box(llm_wasm_011::format::JsonFormatter::extract_json(&answer).unwrap())));
+    let answer = format!(
+        "Sure! Here is the data you asked for:\n```json\n{}\n```\nLet me know.",
+        serde_json::json!({
+            "cities": (0..50).map(|i| serde_json::json!({"name": format!("city {i}"), "pop": i * 1000})).collect::<Vec<_>>()
+        })
+    );
+    g.bench_function("chatty answer / 0.2", |b| {
+        b.iter(|| black_box(llm_wasm::format::JsonFormatter::extract_json(&answer).unwrap()))
+    });
+    g.bench_function("chatty answer / 0.1.1", |b| {
+        b.iter(|| black_box(llm_wasm_011::format::JsonFormatter::extract_json(&answer).unwrap()))
+    });
     let brackets = format!("{} {{\"a\": 1}}", "{".repeat(20_000));
     g.sample_size(10);
-    g.bench_function("20k stray brackets / 0.2", |b| b.iter(|| black_box(llm_wasm::format::JsonFormatter::extract_json(&brackets).is_ok())));
-    g.bench_function("20k stray brackets / 0.1.1", |b| b.iter(|| black_box(llm_wasm_011::format::JsonFormatter::extract_json(&brackets).is_ok())));
+    g.bench_function("20k stray brackets / 0.2", |b| {
+        b.iter(|| black_box(llm_wasm::format::JsonFormatter::extract_json(&brackets).is_ok()))
+    });
+    g.bench_function("20k stray brackets / 0.1.1", |b| {
+        b.iter(|| black_box(llm_wasm_011::format::JsonFormatter::extract_json(&brackets).is_ok()))
+    });
     #[cfg(feature = "repair")]
     {
         let cut = &answer[..answer.len() / 2];
         g.bench_function("cut-off answer / 0.2 lenient", |b| {
-            b.iter(|| black_box(llm_wasm::format::JsonFormatter::extract_json_lenient(cut).unwrap()))
+            b.iter(|| {
+                black_box(llm_wasm::format::JsonFormatter::extract_json_lenient(cut).unwrap())
+            })
         });
     }
     g.finish();
@@ -39,11 +52,18 @@ fn templates(c: &mut Criterion) {
     let mut g = c.benchmark_group("template {{var}}");
     let tpl = "You are {{role}}. Answer in {{lang}}. Context: {{ctx}}. Question: {{q}}";
     let mut vars = HashMap::new();
-    for (k, v) in [("role", "a helpful assistant"), ("lang", "French"), ("ctx", "the Paris metro"), ("q", "how late does it run?")] {
+    for (k, v) in [
+        ("role", "a helpful assistant"),
+        ("lang", "French"),
+        ("ctx", "the Paris metro"),
+        ("q", "how late does it run?"),
+    ] {
         vars.insert(k.to_string(), v.to_string());
     }
     let engine = llm_wasm::template::TemplateEngine::new();
-    g.bench_function("built-in engine", |b| b.iter(|| black_box(engine.render(tpl, &vars).unwrap())));
+    g.bench_function("built-in engine", |b| {
+        b.iter(|| black_box(engine.render(tpl, &vars).unwrap()))
+    });
     #[cfg(feature = "jinja")]
     {
         let ctx = serde_json::to_value(&vars).unwrap();

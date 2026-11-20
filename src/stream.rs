@@ -63,7 +63,11 @@ impl From<StreamUsage> for Usage {
 fn provider_error(err: &Value) -> LlmWasmError {
     let message = match err {
         Value::String(s) => s.clone(),
-        _ => err.get("message").and_then(Value::as_str).unwrap_or("unknown error").to_string(),
+        _ => err
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown error")
+            .to_string(),
     };
     let as_kind = |v: Option<&Value>| match v {
         Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
@@ -91,7 +95,13 @@ impl Default for StreamDecoder {
 impl StreamDecoder {
     /// A decoder with sse-core's default event size limit.
     pub fn new() -> Self {
-        Self { sse: SseDecoder::new(), buf: BytesMut::new(), finished: false, usage: None, text: String::new() }
+        Self {
+            sse: SseDecoder::new(),
+            buf: BytesMut::new(),
+            finished: false,
+            usage: None,
+            text: String::new(),
+        }
     }
 
     /// Feed the next piece of the response body and get the chunks it
@@ -122,11 +132,15 @@ impl StreamDecoder {
             }
             if data == "[DONE]" {
                 self.finished = true;
-                out.push(StreamChunk { delta: String::new(), finished: true });
+                out.push(StreamChunk {
+                    delta: String::new(),
+                    finished: true,
+                });
                 continue;
             }
-            let v: Value = serde_json::from_str(data)
-                .map_err(|e| LlmWasmError::Serialization(format!("stream event is not JSON: {e}")))?;
+            let v: Value = serde_json::from_str(data).map_err(|e| {
+                LlmWasmError::Serialization(format!("stream event is not JSON: {e}"))
+            })?;
             if let Some(chunk) = self.handle(&msg.event, &v)? {
                 out.push(chunk);
             }
@@ -139,24 +153,34 @@ impl StreamDecoder {
         // Anthropic
         match kind {
             "content_block_delta" => {
-                let text = v.pointer("/delta/text").and_then(Value::as_str).unwrap_or("");
+                let text = v
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 return Ok(self.emit(text, false));
             }
             "message_start" => {
                 if let Some(i) = u32_at(v, &["message", "usage", "input_tokens"]) {
-                    self.usage.get_or_insert_with(StreamUsage::default).input_tokens = i;
+                    self.usage
+                        .get_or_insert_with(StreamUsage::default)
+                        .input_tokens = i;
                 }
                 return Ok(None);
             }
             "message_delta" => {
                 if let Some(o) = u32_at(v, &["usage", "output_tokens"]) {
-                    self.usage.get_or_insert_with(StreamUsage::default).output_tokens = o;
+                    self.usage
+                        .get_or_insert_with(StreamUsage::default)
+                        .output_tokens = o;
                 }
                 return Ok(None);
             }
             "message_stop" => {
                 self.finished = true;
-                return Ok(Some(StreamChunk { delta: String::new(), finished: true }));
+                return Ok(Some(StreamChunk {
+                    delta: String::new(),
+                    finished: true,
+                }));
             }
             "error" => return Err(provider_error(v.get("error").unwrap_or(&Value::Null))),
             _ => {}
@@ -171,8 +195,13 @@ impl StreamDecoder {
                 output_tokens: u32_at(u, &["completion_tokens"]).unwrap_or(0),
             });
         }
-        let Some(choice) = v.get("choices").and_then(|c| c.get(0)) else { return Ok(None) };
-        let text = choice.pointer("/delta/content").and_then(Value::as_str).unwrap_or("");
+        let Some(choice) = v.get("choices").and_then(|c| c.get(0)) else {
+            return Ok(None);
+        };
+        let text = choice
+            .pointer("/delta/content")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let done = choice.get("finish_reason").is_some_and(|f| !f.is_null());
         Ok(self.emit(text, done))
     }
@@ -182,7 +211,10 @@ impl StreamDecoder {
             return None;
         }
         self.text.push_str(text);
-        Some(StreamChunk { delta: text.to_string(), finished })
+        Some(StreamChunk {
+            delta: text.to_string(),
+            finished,
+        })
     }
 
     /// True once the stream signalled its end (`[DONE]` or `message_stop`).
@@ -239,7 +271,13 @@ event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
             let (text, d) = run(OPENAI.as_bytes(), piece);
             assert_eq!(text, "Bonjour \u{1F44B}", "piece size {piece}");
             assert!(d.is_finished());
-            assert_eq!(d.usage(), Some(StreamUsage { input_tokens: 9, output_tokens: 3 }));
+            assert_eq!(
+                d.usage(),
+                Some(StreamUsage {
+                    input_tokens: 9,
+                    output_tokens: 3
+                })
+            );
         }
     }
 
@@ -249,7 +287,13 @@ event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
             let (text, d) = run(ANTHROPIC.as_bytes(), piece);
             assert_eq!(text, "Hello there");
             assert!(d.is_finished());
-            assert_eq!(d.usage(), Some(StreamUsage { input_tokens: 25, output_tokens: 15 }));
+            assert_eq!(
+                d.usage(),
+                Some(StreamUsage {
+                    input_tokens: 25,
+                    output_tokens: 15
+                })
+            );
             assert_eq!(d.text(), "Hello there");
         }
     }
@@ -269,26 +313,39 @@ event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
         let mut d = StreamDecoder::new();
         let e = d.push(b"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n").unwrap_err();
         assert!(e.to_string().contains("Overloaded"));
-        assert!(matches!(e, LlmWasmError::Provider { kind: Some(ref k), ref message } if k == "overloaded_error" && message == "Overloaded"));
+        assert!(
+            matches!(e, LlmWasmError::Provider { kind: Some(ref k), ref message } if k == "overloaded_error" && message == "Overloaded")
+        );
         let mut d = StreamDecoder::new();
         let e = d.push(b"data: {\"error\":{\"message\":\"rate limited\",\"type\":\"requests\",\"code\":\"rate_limit_exceeded\"}}\n\n").unwrap_err();
         assert!(e.to_string().contains("rate limited"));
-        assert!(matches!(e, LlmWasmError::Provider { kind: Some(ref k), .. } if k == "rate_limit_exceeded"));
+        assert!(
+            matches!(e, LlmWasmError::Provider { kind: Some(ref k), .. } if k == "rate_limit_exceeded")
+        );
         let mut d = StreamDecoder::new();
-        let e = d.push(b"data: {\"error\":{\"message\":\"x\",\"code\":null}}\n\n").unwrap_err();
+        let e = d
+            .push(b"data: {\"error\":{\"message\":\"x\",\"code\":null}}\n\n")
+            .unwrap_err();
         assert!(matches!(e, LlmWasmError::Provider { kind: None, .. }));
     }
 
     #[test]
     fn stream_usage_converts_to_usage() {
-        let u: Usage = StreamUsage { input_tokens: 25, output_tokens: 15 }.into();
+        let u: Usage = StreamUsage {
+            input_tokens: 25,
+            output_tokens: 15,
+        }
+        .into();
         assert_eq!(u, Usage::new(25, 15));
     }
 
     #[test]
     fn incomplete_event_waits_for_more() {
         let mut d = StreamDecoder::new();
-        assert!(d.push(b"data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n").unwrap().is_empty());
+        assert!(d
+            .push(b"data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n")
+            .unwrap()
+            .is_empty());
         assert_eq!(d.push(b"\n").unwrap().len(), 1);
     }
 }

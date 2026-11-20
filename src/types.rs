@@ -45,7 +45,10 @@ impl ChatMessage {
     /// * `role`: sender role
     /// * `content`: message text
     pub fn new(role: Role, content: impl Into<String>) -> Self {
-        Self { role, content: content.into() }
+        Self {
+            role,
+            content: content.into(),
+        }
     }
 }
 
@@ -78,7 +81,10 @@ impl ChatRequest {
 
     /// Total character count across all messages.
     pub fn total_content_chars(&self) -> usize {
-        self.messages.iter().map(|m| m.content.chars().count()).sum()
+        self.messages
+            .iter()
+            .map(|m| m.content.chars().count())
+            .sum()
     }
 }
 
@@ -148,7 +154,11 @@ pub struct Usage {
 impl Usage {
     /// Uncached input and visible output tokens; the other counts are zero.
     pub fn new(input: u64, output: u64) -> Self {
-        Self { input, output, ..Self::default() }
+        Self {
+            input,
+            output,
+            ..Self::default()
+        }
     }
 
     /// Set the uncached input token count.
@@ -183,7 +193,9 @@ impl Usage {
 
     /// All prompt-side tokens: `input + cache_read + cache_write`.
     pub fn total_input(&self) -> u64 {
-        self.input.saturating_add(self.cache_read).saturating_add(self.cache_write)
+        self.input
+            .saturating_add(self.cache_read)
+            .saturating_add(self.cache_write)
     }
 
     /// All generated tokens: `output + reasoning`.
@@ -237,9 +249,15 @@ impl Usage {
         if u.get("prompt_tokens").is_some() || u.get("completion_tokens").is_some() {
             let prompt = at(&["prompt_tokens"]);
             let completion = at(&["completion_tokens"]);
-            let cached = at(&["prompt_tokens_details", "cached_tokens"]).max(at(&["prompt_cache_hit_tokens"])).min(prompt);
+            let cached = at(&["prompt_tokens_details", "cached_tokens"])
+                .max(at(&["prompt_cache_hit_tokens"]))
+                .min(prompt);
             let reasoning = at(&["completion_tokens_details", "reasoning_tokens"]).min(completion);
-            return Some(Usage::new(prompt - cached, completion - reasoning).with_cache_read(cached).with_reasoning(reasoning));
+            return Some(
+                Usage::new(prompt - cached, completion - reasoning)
+                    .with_cache_read(cached)
+                    .with_reasoning(reasoning),
+            );
         }
         if u.get("input_tokens").is_none() && u.get("output_tokens").is_none() {
             return None;
@@ -250,7 +268,11 @@ impl Usage {
             // OpenAI Responses API: input_tokens includes the cached part.
             let cached = at(&["input_tokens_details", "cached_tokens"]).min(input);
             let reasoning = at(&["output_tokens_details", "reasoning_tokens"]).min(output);
-            return Some(Usage::new(input - cached, output - reasoning).with_cache_read(cached).with_reasoning(reasoning));
+            return Some(
+                Usage::new(input - cached, output - reasoning)
+                    .with_cache_read(cached)
+                    .with_reasoning(reasoning),
+            );
         }
         Some(
             Usage::new(input, output)
@@ -334,17 +356,34 @@ mod tests {
 
     #[test]
     fn test_usage_builders_totals_and_sum() {
-        let u = Usage::new(10, 5).with_cache_read(100).with_cache_write(20).with_reasoning(7);
-        assert_eq!((u.total_input(), u.total_output(), u.total()), (130, 12, 142));
+        let u = Usage::new(10, 5)
+            .with_cache_read(100)
+            .with_cache_write(20)
+            .with_reasoning(7);
+        assert_eq!(
+            (u.total_input(), u.total_output(), u.total()),
+            (130, 12, 142)
+        );
         let mut sum = Usage::default();
         sum += u;
         sum += Usage::new(1, 1);
-        assert_eq!(sum, Usage::new(11, 6).with_cache_read(100).with_cache_write(20).with_reasoning(7));
+        assert_eq!(
+            sum,
+            Usage::new(11, 6)
+                .with_cache_read(100)
+                .with_cache_write(20)
+                .with_reasoning(7)
+        );
         assert_eq!((Usage::new(u64::MAX, 0) + Usage::new(1, 0)).input, u64::MAX);
         // missing fields read as zero
         let back: Usage = serde_json::from_str(r#"{"input":3,"cache_read":4}"#).unwrap();
         assert_eq!(back, Usage::new(3, 0).with_cache_read(4));
-        let r = ChatResponse { content: String::new(), model: "m".into(), input_tokens: 9, output_tokens: 2 };
+        let r = ChatResponse {
+            content: String::new(),
+            model: "m".into(),
+            input_tokens: 9,
+            output_tokens: 2,
+        };
         assert_eq!(r.usage(), Usage::new(9, 2));
     }
 
@@ -354,17 +393,34 @@ mod tests {
         // Anthropic: input_tokens already excludes the cache
         let a = json!({"usage": {"input_tokens": 30, "output_tokens": 9,
             "cache_read_input_tokens": 1_000, "cache_creation_input_tokens": 200}});
-        assert_eq!(Usage::from_json(&a), Some(Usage::new(30, 9).with_cache_read(1_000).with_cache_write(200)));
+        assert_eq!(
+            Usage::from_json(&a),
+            Some(
+                Usage::new(30, 9)
+                    .with_cache_read(1_000)
+                    .with_cache_write(200)
+            )
+        );
         // OpenAI Responses API: the cached part is inside input_tokens
         let r = json!({"input_tokens": 1_000, "output_tokens": 50,
             "input_tokens_details": {"cached_tokens": 800}, "output_tokens_details": {"reasoning_tokens": 20}});
-        assert_eq!(Usage::from_json(&r), Some(Usage::new(200, 30).with_cache_read(800).with_reasoning(20)));
+        assert_eq!(
+            Usage::from_json(&r),
+            Some(Usage::new(200, 30).with_cache_read(800).with_reasoning(20))
+        );
         // DeepSeek reports cache hits at the top level
-        let d = json!({"prompt_tokens": 100, "completion_tokens": 5, "prompt_cache_hit_tokens": 60});
-        assert_eq!(Usage::from_json(&d), Some(Usage::new(40, 5).with_cache_read(60)));
+        let d =
+            json!({"prompt_tokens": 100, "completion_tokens": 5, "prompt_cache_hit_tokens": 60});
+        assert_eq!(
+            Usage::from_json(&d),
+            Some(Usage::new(40, 5).with_cache_read(60))
+        );
         // nonsense never underflows; unknown shapes are None
         let bad = json!({"prompt_tokens": 1, "completion_tokens": "x", "prompt_tokens_details": {"cached_tokens": 9}});
-        assert_eq!(Usage::from_json(&bad), Some(Usage::new(0, 0).with_cache_read(1)));
+        assert_eq!(
+            Usage::from_json(&bad),
+            Some(Usage::new(0, 0).with_cache_read(1))
+        );
         assert_eq!(Usage::from_json(&json!({"choices": []})), None);
         assert_eq!(Usage::from_json(&json!(null)), None);
         // a body whose usage is null falls back to reading the body itself
@@ -373,14 +429,23 @@ mod tests {
 
     #[test]
     fn test_stream_chunk_finished_flag() {
-        let chunk = StreamChunk { delta: "done".into(), finished: true };
+        let chunk = StreamChunk {
+            delta: "done".into(),
+            finished: true,
+        };
         assert!(chunk.finished);
     }
 
     #[test]
     fn test_request_serializes_to_openai_chat_body() {
         // 0.1 wrote "User" and nulls, which OpenAI-style APIs reject.
-        let req = ChatRequest::new("gpt-4o-mini", vec![ChatMessage::new(Role::System, "Be brief."), ChatMessage::new(Role::User, "Hi")]);
+        let req = ChatRequest::new(
+            "gpt-4o-mini",
+            vec![
+                ChatMessage::new(Role::System, "Be brief."),
+                ChatMessage::new(Role::User, "Hi"),
+            ],
+        );
         let body = serde_json::to_value(&req).unwrap();
         assert_eq!(
             body,

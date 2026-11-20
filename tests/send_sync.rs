@@ -53,7 +53,13 @@ fn guard_chain_works_from_another_thread() {
     let chain = Arc::new(GuardChain::new().add(ContentGuard::whole_words(vec!["password".into()])));
     let shared = Arc::clone(&chain);
     let blocked = std::thread::spawn(move || {
-        let req = ChatRequest::new("m", vec![llm_wasm::types::ChatMessage::new(llm_wasm::types::Role::User, "my password")]);
+        let req = ChatRequest::new(
+            "m",
+            vec![llm_wasm::types::ChatMessage::new(
+                llm_wasm::types::Role::User,
+                "my password",
+            )],
+        );
         shared.check(&req).is_err()
     })
     .join()

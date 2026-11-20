@@ -1,12 +1,18 @@
-# llm-wasm
+# llm-wasm: if your cost guard needs Tokio, it cannot run where the call starts
 
-<!-- outcome-block -->
-**Cost tracking, retries, model routing, stream parsing and JSON repair for LLM calls, running unchanged in a browser, an edge worker or a normal program.**
+**Why this exists:** LLM calls now start in browsers, edge workers and plugins, and the logic that should guard them (what it costs, whether to retry, whether to block it) lives in SDKs that need an async runtime, a socket and a clock, so it gets skipped there.
 
-**Why this over the alternatives:** SDKs need Tokio and an HTTP client. This does no I/O and reads no clock, so it builds for `wasm32-unknown-unknown` as is, with JavaScript bindings.
+**Why this instead of the usual approach:** SDK helpers are tied to their HTTP client. llm-wasm is the bookkeeping only, with no I/O and no clock: real prices and a cost ledger with budgets (llm-prices table), retry with jitter and Retry-After, request guards, model routing, a TTL cache, stream decoding and JSON repair. It builds for `wasm32-unknown-unknown` as is, with optional JavaScript bindings.
 
-**Guarantee:** if it doesn't do what this README says, [open an issue](https://github.com/Mattbusel/llm-wasm/issues) and I'll fix it.
-<!-- outcome-block -->
+**Why adopt it today:** `cargo add llm-wasm`, wrap the call you already make with the ledger and the retry policy, and the same code enforces the budget in the browser and on the server.
+
+**Built for:** developers calling LLMs from WebAssembly, Cloudflare/Fastly-style edge workers or plugin hosts, and anyone who wants one policy for both native and wasm.
+
+**Tradeoffs we chose on purpose:**
+
+- You bring the transport: it never sends a request.
+- You pass the time in: no clock means TTLs and backoff take a timestamp argument.
+
 
 The bookkeeping around an LLM API call (what it costs, whether to retry, whether to block it, which model to use, how to read a streamed answer, how to pull JSON out of it) as plain Rust that runs the same in a browser, an edge worker or a normal program.
 

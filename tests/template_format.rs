@@ -6,7 +6,10 @@ use llm_wasm::format::{JsonFormatter, MarkdownFormatter};
 use llm_wasm::template::TemplateEngine;
 
 fn ctx(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 #[test]
@@ -49,7 +52,10 @@ fn test_extract_json_from_prose_response() {
 fn test_template_with_unknown_var_leaves_placeholder() {
     let engine = TemplateEngine::new();
     let out = engine
-        .render("Hello {{name}}, your score is {{score}}.", &ctx(&[("name", "Alice")]))
+        .render(
+            "Hello {{name}}, your score is {{score}}.",
+            &ctx(&[("name", "Alice")]),
+        )
         .unwrap();
     assert!(out.contains("Alice"));
     assert!(out.contains("{{score}}")); // unknown var left verbatim

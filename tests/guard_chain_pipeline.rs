@@ -37,7 +37,9 @@ fn test_chain_blocks_on_length_when_content_clean() {
         .add(ContentGuard::new(vec!["spam".into()]))
         .add(LengthGuard::new(10));
 
-    let result = chain.check(&user_req("this message is definitely longer than ten characters"));
+    let result = chain.check(&user_req(
+        "this message is definitely longer than ten characters",
+    ));
     assert!(
         matches!(result, Err(LlmWasmError::GuardBlocked { ref guard, .. }) if guard == "length"),
         "length guard should fire"

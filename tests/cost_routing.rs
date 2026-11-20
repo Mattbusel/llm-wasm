@@ -1,15 +1,20 @@
 //! Integration test: route by model, record cost, verify ledger.
 
 use llm_wasm::cost::{context_window, pricing_for_model, CostLedger, ModelPricing};
-use llm_wasm::LlmWasmError;
 use llm_wasm::routing::{Router, RoutingCondition, RoutingRule};
 use llm_wasm::types::{ChatMessage, ChatRequest, Role, Usage};
+use llm_wasm::LlmWasmError;
 
 fn make_request(model: &str, msg_count: usize, max_tokens: Option<u32>) -> ChatRequest {
     let messages = (0..msg_count)
         .map(|_| ChatMessage::new(Role::User, "test message content"))
         .collect();
-    ChatRequest { model: model.into(), messages, max_tokens, temperature: None }
+    ChatRequest {
+        model: model.into(),
+        messages,
+        max_tokens,
+        temperature: None,
+    }
 }
 
 #[test]
@@ -86,10 +91,17 @@ fn opus_5_5_mixed_cache_usage() {
     // claude-opus-5-5: $4 input, $20 output, $0.20 cache read, $5 cache write per million.
     let p = pricing_for_model("claude-opus-5-5").unwrap();
     assert_eq!(
-        (p.input_per_million, p.output_per_million, p.cache_read_per_million, p.cache_write_per_million),
+        (
+            p.input_per_million,
+            p.output_per_million,
+            p.cache_read_per_million,
+            p.cache_write_per_million
+        ),
         (4.0, 20.0, Some(0.2), Some(5.0))
     );
-    let usage = Usage::new(3_000, 1_200).with_cache_read(180_000).with_cache_write(20_000);
+    let usage = Usage::new(3_000, 1_200)
+        .with_cache_read(180_000)
+        .with_cache_write(20_000);
     // 3k x 4 + 180k x 0.2 + 20k x 5 + 1.2k x 20 = 12_000 + 36_000 + 100_000 + 24_000 (per million)
     assert!(close(p.cost(&usage), 0.172));
     // Without the cache split the same tokens cost 203k x 4 + 1.2k x 20 = $0.836.
@@ -111,17 +123,27 @@ fn openai_cached_input_and_reasoning() {
     let p = pricing_for_model("openai/gpt-5").unwrap();
     assert_eq!((p.provider, p.cache_write_per_million), ("openai", None));
     // prompt_tokens 50_000 with 40_000 cached; completion_tokens 3_000 of which 2_000 reasoning
-    let usage = Usage::new(10_000, 1_000).with_cache_read(40_000).with_reasoning(2_000);
+    let usage = Usage::new(10_000, 1_000)
+        .with_cache_read(40_000)
+        .with_reasoning(2_000);
     assert!(close(p.cost(&usage), 0.0475)); // 0.0125 + 0.005 + 0.03
-    // cache writes on a provider without a write price are billed as input
-    assert!(close(p.cost(&Usage::default().with_cache_write(1_000_000)), 1.25));
+                                            // cache writes on a provider without a write price are billed as input
+    assert!(close(
+        p.cost(&Usage::default().with_cache_write(1_000_000)),
+        1.25
+    ));
 }
 
 #[test]
 fn ledger_record_usage_enforces_budget() {
     let mut ledger = CostLedger::with_budget(0.20);
-    let usage = Usage::new(3_000, 1_200).with_cache_read(180_000).with_cache_write(20_000);
-    assert!(close(ledger.record_usage("claude-opus-5-5", &usage).unwrap(), 0.172));
+    let usage = Usage::new(3_000, 1_200)
+        .with_cache_read(180_000)
+        .with_cache_write(20_000);
+    assert!(close(
+        ledger.record_usage("claude-opus-5-5", &usage).unwrap(),
+        0.172
+    ));
     let err = ledger.record_usage("claude-opus-5-5", &usage).unwrap_err();
     assert!(matches!(err, LlmWasmError::BudgetExceeded { .. }));
     assert_eq!(ledger.entry_count(), 1);
@@ -132,7 +154,12 @@ fn ledger_record_usage_enforces_budget() {
     ));
     // a custom price for a model missing from the table
     let custom = ModelPricing::new(1.0, 2.0).with_cache_read(0.1);
-    assert!(close(ledger.record_usd(custom.cost(&Usage::new(1_000, 1_000))).unwrap(), 0.175));
+    assert!(close(
+        ledger
+            .record_usd(custom.cost(&Usage::new(1_000, 1_000)))
+            .unwrap(),
+        0.175
+    ));
 }
 
 #[test]

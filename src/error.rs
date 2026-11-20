@@ -82,7 +82,9 @@ pub enum LlmWasmError {
 }
 
 fn kind_suffix(kind: &Option<String>) -> String {
-    kind.as_deref().map(|k| format!(" ({k})")).unwrap_or_default()
+    kind.as_deref()
+        .map(|k| format!(" ({k})"))
+        .unwrap_or_default()
 }
 
 impl From<serde_json::Error> for LlmWasmError {
@@ -131,7 +133,10 @@ mod tests {
 
     #[test]
     fn test_budget_exceeded_display() {
-        let e = LlmWasmError::BudgetExceeded { used: 1.5, limit: 1.0 };
+        let e = LlmWasmError::BudgetExceeded {
+            used: 1.5,
+            limit: 1.0,
+        };
         let s = e.to_string();
         assert!(s.contains("1.5000"));
         assert!(s.contains("1.0000"));
@@ -161,9 +166,18 @@ mod tests {
             LlmWasmError::UnknownModel("gpt-9".into()).to_string(),
             "Unknown model 'gpt-9': no pricing data available"
         );
-        let e = LlmWasmError::Provider { kind: Some("overloaded_error".into()), message: "Overloaded".into() };
-        assert_eq!(e.to_string(), "Provider error (overloaded_error): Overloaded");
-        let e = LlmWasmError::Provider { kind: None, message: "boom".into() };
+        let e = LlmWasmError::Provider {
+            kind: Some("overloaded_error".into()),
+            message: "Overloaded".into(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "Provider error (overloaded_error): Overloaded"
+        );
+        let e = LlmWasmError::Provider {
+            kind: None,
+            message: "boom".into(),
+        };
         assert_eq!(e.to_string(), "Provider error: boom");
     }
 

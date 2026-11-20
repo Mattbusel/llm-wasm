@@ -60,7 +60,8 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rig_agent::agent::{
-    AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, ModelTurnAction, ModelTurnFinished,
+    AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, ModelTurnAction,
+    ModelTurnFinished,
 };
 use rig_agent::completion::AssistantContent;
 
@@ -104,13 +105,21 @@ impl CostLedgerHook {
     /// as `model` (a name from the price table, such as `"gpt-4o"` or
     /// `"anthropic/claude-sonnet-4-5"`).
     pub fn new(model: impl Into<String>, budget_usd: f64) -> Self {
-        Self::with_ledger(Arc::new(Mutex::new(CostLedger::with_budget(budget_usd))), model)
+        Self::with_ledger(
+            Arc::new(Mutex::new(CostLedger::with_budget(budget_usd))),
+            model,
+        )
     }
 
     /// A hook that books into an existing ledger, so several runs or agents
     /// can share one budget. A ledger without a budget only counts.
     pub fn with_ledger(ledger: Arc<Mutex<CostLedger>>, model: impl Into<String>) -> Self {
-        Self { ledger, model: model.into(), pricing: None, stop_below_usd: 0.0 }
+        Self {
+            ledger,
+            model: model.into(),
+            pricing: None,
+            stop_below_usd: 0.0,
+        }
     }
 
     /// Price turns with these rates instead of looking `model` up, for a
@@ -183,10 +192,17 @@ impl CostLedgerHook {
 
 impl AgentHook for CostLedgerHook {
     fn name(&self) -> Option<String> {
-        Some(format!("llm_wasm::CostLedgerHook({}, stop_below={})", self.model, self.stop_below_usd))
+        Some(format!(
+            "llm_wasm::CostLedgerHook({}, stop_below={})",
+            self.model, self.stop_below_usd
+        ))
     }
 
-    async fn on_completion_call(&self, _ctx: &HookContext, _event: CompletionCallEvent<'_>) -> CompletionCallAction {
+    async fn on_completion_call(
+        &self,
+        _ctx: &HookContext,
+        _event: CompletionCallEvent<'_>,
+    ) -> CompletionCallAction {
         let ledger = self.lock();
         match ledger.remaining_usd() {
             Some(left) if left <= self.stop_below_usd || ledger.exceeded_budget() => {
@@ -196,10 +212,18 @@ impl AgentHook for CostLedgerHook {
         }
     }
 
-    async fn on_model_turn_finished(&self, _ctx: &HookContext, event: ModelTurnFinished<'_>) -> ModelTurnAction {
+    async fn on_model_turn_finished(
+        &self,
+        _ctx: &HookContext,
+        event: ModelTurnFinished<'_>,
+    ) -> ModelTurnAction {
         let cost = match self.turn_cost_usd(&event.usage) {
             Ok(cost) => cost,
-            Err(e) => return ModelTurnAction::Stop(format!("cannot price this turn, so the budget cannot hold: {e}")),
+            Err(e) => {
+                return ModelTurnAction::Stop(format!(
+                    "cannot price this turn, so the budget cannot hold: {e}"
+                ))
+            }
         };
         let mut ledger = self.lock();
         if let Err(e) = ledger.record_paid_usd(cost) {
@@ -211,7 +235,12 @@ impl AgentHook for CostLedgerHook {
         };
         // A turn without tool calls is the final answer, already paid for:
         // return it. Otherwise stop before the tools run.
-        if spent && event.content.iter().any(|c| matches!(c, AssistantContent::ToolCall(_))) {
+        if spent
+            && event
+                .content
+                .iter()
+                .any(|c| matches!(c, AssistantContent::ToolCall(_)))
+        {
             ModelTurnAction::Stop(self.stop_reason(&ledger))
         } else {
             ModelTurnAction::Continue
@@ -232,10 +261,23 @@ mod tests {
             .cache_creation_input_tokens(1_000)
             .output_tokens(500)
             .reasoning_tokens(200);
-        assert_eq!(Usage::from(&u), Usage::new(1_000, 300).with_cache_read(8_000).with_cache_write(1_000).with_reasoning(200));
+        assert_eq!(
+            Usage::from(&u),
+            Usage::new(1_000, 300)
+                .with_cache_read(8_000)
+                .with_cache_write(1_000)
+                .with_reasoning(200)
+        );
         // nonsense counts never underflow
-        let odd = RigUsage::new().input_tokens(10).cached_input_tokens(8).cache_creation_input_tokens(8).reasoning_tokens(5);
-        assert_eq!(Usage::from(&odd), Usage::new(0, 0).with_cache_read(8).with_cache_write(2));
+        let odd = RigUsage::new()
+            .input_tokens(10)
+            .cached_input_tokens(8)
+            .cache_creation_input_tokens(8)
+            .reasoning_tokens(5);
+        assert_eq!(
+            Usage::from(&odd),
+            Usage::new(0, 0).with_cache_read(8).with_cache_write(2)
+        );
         assert_eq!(Usage::from(&RigUsage::new()), Usage::default());
     }
 

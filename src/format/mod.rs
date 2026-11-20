@@ -131,7 +131,9 @@ impl JsonFormatter {
                 }
             }
         }
-        Err(LlmWasmError::Serialization("no valid JSON found in text".into()))
+        Err(LlmWasmError::Serialization(
+            "no valid JSON found in text".into(),
+        ))
     }
 
     /// Like [`extract_json`](Self::extract_json), but when no strictly valid
@@ -191,7 +193,9 @@ impl JsonFormatter {
                 return Ok(v);
             }
         }
-        Err(LlmWasmError::Serialization("no JSON object or array found in text, even after repair".into()))
+        Err(LlmWasmError::Serialization(
+            "no JSON object or array found in text, even after repair".into(),
+        ))
     }
 
     /// Return `true` if `text` is a valid JSON value.
@@ -234,7 +238,9 @@ impl MarkdownFormatter {
 
         // The opening fence line ends at the next newline
         let after_open_fence = &text[open_start + 3..];
-        let open_line_end = after_open_fence.find('\n').unwrap_or(after_open_fence.len());
+        let open_line_end = after_open_fence
+            .find('\n')
+            .unwrap_or(after_open_fence.len());
         let inner_start = open_start + 3 + open_line_end + 1; // skip the newline
 
         // Find closing fence
@@ -305,7 +311,9 @@ mod tests {
 
     #[test]
     fn test_markdown_has_code_fence_true() {
-        assert!(MarkdownFormatter::has_code_fence("```rust\nfn main() {}\n```"));
+        assert!(MarkdownFormatter::has_code_fence(
+            "```rust\nfn main() {}\n```"
+        ));
     }
 
     #[test]
@@ -337,7 +345,10 @@ mod tests {
             ("{\"a\": 1 // one\n}", json!({"a": 1})),
             (r#"{"a": True, "b": None}"#, json!({"a": true, "b": null})),
             (r#"{"a": 1, "b": "hel"#, json!({"a": 1, "b": "hel"})),
-            ("```json\n{\"items\": [{\"id\": 1}, {\"id\": 2", json!({"items": [{"id": 1}, {"id": 2}]})),
+            (
+                "```json\n{\"items\": [{\"id\": 1}, {\"id\": 2",
+                json!({"items": [{"id": 1}, {"id": 2}]}),
+            ),
             ("{\"a\": \"line1\nline2\"}", json!({"a": "line1\nline2"})),
             ("[citation needed] {\"a\": 1,}", json!({"a": 1})),
             ("{'a': 1} hope that helps", json!({"a": 1})),
@@ -346,10 +357,17 @@ mod tests {
             ("[1, 2,]", json!([1, 2])),
         ];
         for (input, want) in cases {
-            assert_eq!(JsonFormatter::extract_json_lenient(input).unwrap(), want, "input {input:?}");
+            assert_eq!(
+                JsonFormatter::extract_json_lenient(input).unwrap(),
+                want,
+                "input {input:?}"
+            );
         }
         // valid JSON is returned untouched, prose is still an error
-        assert_eq!(JsonFormatter::extract_json_lenient(r#"x {"n": 12345678901234567890} y"#).unwrap(), json!({"n": 12345678901234567890u64}));
+        assert_eq!(
+            JsonFormatter::extract_json_lenient(r#"x {"n": 12345678901234567890} y"#).unwrap(),
+            json!({"n": 12345678901234567890u64})
+        );
         assert!(JsonFormatter::extract_json_lenient("The answer is Paris.").is_err());
         assert!(JsonFormatter::extract_json_lenient("").is_err());
         // strict extraction still refuses broken JSON
@@ -365,7 +383,10 @@ mod tests {
         assert!(t.elapsed().as_secs_f64() < 2.0, "{:?}", t.elapsed());
         // within the budget, JSON after many stray brackets is still found
         let text = format!("{} {{\"a\": 1}}", "{".repeat(1_000));
-        assert_eq!(JsonFormatter::extract_json(&text).unwrap(), serde_json::json!({"a": 1}));
+        assert_eq!(
+            JsonFormatter::extract_json(&text).unwrap(),
+            serde_json::json!({"a": 1})
+        );
     }
 
     #[cfg(feature = "repair")]

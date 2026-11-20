@@ -47,7 +47,10 @@ pub struct SecretGuard {
 impl std::fmt::Debug for SecretGuard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SecretGuard")
-            .field("kinds", &self.rules.iter().map(|r| r.kind).collect::<Vec<_>>())
+            .field(
+                "kinds",
+                &self.rules.iter().map(|r| r.kind).collect::<Vec<_>>(),
+            )
             .field("action", &self.action)
             .finish()
     }
@@ -57,14 +60,26 @@ impl std::fmt::Debug for SecretGuard {
 // all these formats need, and leaving out the Unicode tables keeps the wasm
 // module about 400 KB smaller.
 const RULES: &[(&str, &str, bool)] = &[
-    ("private_key", r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?su:.)*?-----END [A-Z ]*PRIVATE KEY-----", false),
+    (
+        "private_key",
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?su:.)*?-----END [A-Z ]*PRIVATE KEY-----",
+        false,
+    ),
     // OpenAI (sk-, sk-proj-), Anthropic (sk-ant-), OpenRouter (sk-or-) and similar
     ("api_key", r"\bsk-[A-Za-z0-9_-]{20,}", false),
     ("aws_access_key", r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b", false),
-    ("github_token", r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})", false),
+    (
+        "github_token",
+        r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})",
+        false,
+    ),
     ("google_api_key", r"\bAIza[0-9A-Za-z_-]{35}", false),
     ("slack_token", r"\bxox[abprs]-[A-Za-z0-9-]{10,}", false),
-    ("email", r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b", false),
+    (
+        "email",
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b",
+        false,
+    ),
     ("card_number", r"\b\d(?:[ -]?\d){12,18}\b", true),
 ];
 
@@ -77,7 +92,18 @@ fn luhn_ok(s: &str) -> bool {
         .iter()
         .rev()
         .enumerate()
-        .map(|(i, &d)| if i % 2 == 1 { let x = d * 2; if x > 9 { x - 9 } else { x } } else { d })
+        .map(|(i, &d)| {
+            if i % 2 == 1 {
+                let x = d * 2;
+                if x > 9 {
+                    x - 9
+                } else {
+                    x
+                }
+            } else {
+                d
+            }
+        })
         .sum();
     sum.is_multiple_of(10)
 }
@@ -86,7 +112,11 @@ impl SecretGuard {
     fn with_action(action: SecretAction) -> Self {
         let rules = RULES
             .iter()
-            .filter_map(|&(kind, pat, luhn)| Regex::new(&format!("(?-u){pat}")).ok().map(|re| Rule { kind, re, luhn }))
+            .filter_map(|&(kind, pat, luhn)| {
+                Regex::new(&format!("(?-u){pat}"))
+                    .ok()
+                    .map(|re| Rule { kind, re, luhn })
+            })
             .collect();
         Self { rules, action }
     }
@@ -126,11 +156,14 @@ impl SecretGuard {
     pub fn redact_text(&self, text: &str) -> String {
         let mut out = text.to_string();
         for r in &self.rules {
-            out = r
-                .re
-                .replace_all(&out, |caps: &regex::Captures<'_>| {
+            out =
+                r.re.replace_all(&out, |caps: &regex::Captures<'_>| {
                     let m = caps.get(0).map_or("", |m| m.as_str());
-                    if !r.luhn || luhn_ok(m) { format!("[REDACTED:{}]", r.kind) } else { m.to_string() }
+                    if !r.luhn || luhn_ok(m) {
+                        format!("[REDACTED:{}]", r.kind)
+                    } else {
+                        m.to_string()
+                    }
                 })
                 .into_owned();
         }
@@ -144,7 +177,12 @@ impl Guard for SecretGuard {
     }
 
     fn check(&self, request: &ChatRequest) -> GuardResult {
-        let found: Vec<&'static str> = request.messages.iter().flat_map(|m| self.find(&m.content)).map(|(k, _)| k).collect();
+        let found: Vec<&'static str> = request
+            .messages
+            .iter()
+            .flat_map(|m| self.find(&m.content))
+            .map(|(k, _)| k)
+            .collect();
         if found.is_empty() {
             return GuardResult::Allow;
         }
@@ -152,7 +190,9 @@ impl Guard for SecretGuard {
             SecretAction::Block => {
                 let mut kinds = found;
                 kinds.dedup();
-                GuardResult::Block { reason: format!("request contains {}", kinds.join(", ")) }
+                GuardResult::Block {
+                    reason: format!("request contains {}", kinds.join(", ")),
+                }
             }
             SecretAction::Redact => {
                 let mut req = request.clone();
@@ -170,17 +210,30 @@ mod tests {
     use super::*;
 
     fn kinds(text: &str) -> Vec<&'static str> {
-        SecretGuard::block().find(text).into_iter().map(|(k, _)| k).collect()
+        SecretGuard::block()
+            .find(text)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect()
     }
 
     #[test]
     fn finds_real_shapes() {
-        assert_eq!(kinds("key sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv-0123"), ["api_key"]);
+        assert_eq!(
+            kinds("key sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv-0123"),
+            ["api_key"]
+        );
         assert_eq!(kinds("AKIAIOSFODNN7EXAMPLE"), ["aws_access_key"]);
-        assert_eq!(kinds("ghp_0123456789abcdefghijABCDEFGHIJ0123456789"), ["github_token"]);
+        assert_eq!(
+            kinds("ghp_0123456789abcdefghijABCDEFGHIJ0123456789"),
+            ["github_token"]
+        );
         assert_eq!(kinds("mail me: ada.lovelace+llm@example.co.uk"), ["email"]);
         assert_eq!(kinds("card 4111-1111-1111-1111 exp 12/29"), ["card_number"]);
-        assert_eq!(kinds("-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----"), ["private_key"]);
+        assert_eq!(
+            kinds("-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----"),
+            ["private_key"]
+        );
     }
 
     #[test]
@@ -195,15 +248,37 @@ mod tests {
 
     #[test]
     fn block_and_redact() {
-        let req = ChatRequest::new("m", vec![crate::types::ChatMessage::new(crate::types::Role::User, "token xoxb-1234567890-abcdef here")]);
-        assert!(matches!(SecretGuard::block().check(&req), GuardResult::Block { reason } if reason.contains("slack_token")));
+        let req = ChatRequest::new(
+            "m",
+            vec![crate::types::ChatMessage::new(
+                crate::types::Role::User,
+                "token xoxb-1234567890-abcdef here",
+            )],
+        );
+        assert!(
+            matches!(SecretGuard::block().check(&req), GuardResult::Block { reason } if reason.contains("slack_token"))
+        );
         match SecretGuard::redact().check(&req) {
-            GuardResult::Modify(r) => assert_eq!(r.messages[0].content, "token [REDACTED:slack_token] here"),
+            GuardResult::Modify(r) => {
+                assert_eq!(r.messages[0].content, "token [REDACTED:slack_token] here")
+            }
             _ => panic!("expected a rewrite"),
         }
-        let clean = ChatRequest::new("m", vec![crate::types::ChatMessage::new(crate::types::Role::User, "hello")]);
-        assert!(matches!(SecretGuard::block().check(&clean), GuardResult::Allow));
-        assert!(SecretGuard::block().allow("email").find("a@b.example.com").is_empty());
+        let clean = ChatRequest::new(
+            "m",
+            vec![crate::types::ChatMessage::new(
+                crate::types::Role::User,
+                "hello",
+            )],
+        );
+        assert!(matches!(
+            SecretGuard::block().check(&clean),
+            GuardResult::Allow
+        ));
+        assert!(SecretGuard::block()
+            .allow("email")
+            .find("a@b.example.com")
+            .is_empty());
     }
 
     #[test]

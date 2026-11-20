@@ -53,8 +53,17 @@ fn cache_key_symmetric_variation() {
 #[test]
 fn cache_key_deterministic_across_calls() {
     for _ in 0..5 {
-        let k = cache_key("claude-sonnet-4-6", "[{\"role\":\"user\",\"content\":\"hi\"}]");
-        assert_eq!(k, cache_key("claude-sonnet-4-6", "[{\"role\":\"user\",\"content\":\"hi\"}]"));
+        let k = cache_key(
+            "claude-sonnet-4-6",
+            "[{\"role\":\"user\",\"content\":\"hi\"}]",
+        );
+        assert_eq!(
+            k,
+            cache_key(
+                "claude-sonnet-4-6",
+                "[{\"role\":\"user\",\"content\":\"hi\"}]"
+            )
+        );
     }
 }
 
@@ -111,7 +120,7 @@ fn ttl_cache_overwrite_refreshes_timestamp() {
     let mut cache = TtlCache::new(500.0);
     cache.set(1, "old".into(), 0.0);
     cache.set(1, "new".into(), 400.0); // re-insert at t=400
-    // At t=600: 600-400=200 < 500 → fresh
+                                       // At t=600: 600-400=200 < 500 → fresh
     assert_eq!(cache.get(&1u64, 600.0), Some("new".into()));
     // At t=901: 901-400=501 > 500 → expired
     assert!(cache.get(&1u64, 901.0).is_none());
@@ -120,8 +129,8 @@ fn ttl_cache_overwrite_refreshes_timestamp() {
 #[test]
 fn ttl_cache_purge_expired_removes_correct_count() {
     let mut cache = TtlCache::new(500.0);
-    cache.set(1, "a".into(), 0.0);  // expires at 500
-    cache.set(2, "b".into(), 0.0);  // expires at 500
+    cache.set(1, "a".into(), 0.0); // expires at 500
+    cache.set(2, "b".into(), 0.0); // expires at 500
     cache.set(3, "c".into(), 400.0); // expires at 900
     let removed = cache.purge_expired(600.0);
     assert_eq!(removed, 2);

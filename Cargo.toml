@@ -1,14 +1,14 @@
 [package]
 name = "llm-wasm"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
-description = "LLM call logic for WebAssembly and native: real model prices and cost ledger, retry with jitter and Retry-After, guards, routing, cache, templates, JSON extraction, optional JS bindings"
+description = "If your cost guard needs Tokio, it cannot run where the call starts. LLM call logic with no I/O for wasm32 and native: real prices and budget ledger, retry with Retry-After, guards, routing, cache, stream decoding, JSON repair, JS bindings."
 readme = "README.md"
 repository = "https://github.com/Mattbusel/llm-wasm"
 documentation = "https://docs.rs/llm-wasm"
-keywords = ["llm", "wasm", "openai", "anthropic", "cost"]
+keywords = ["llm", "wasm", "budget", "cost", "edge"]
 categories = ["wasm", "web-programming", "api-bindings"]
 include = ["src/**/*.rs", "benches/**/*.rs", "examples/*.rs", "examples/node/*.mjs", "scripts/update_prices.py", "Cargo.toml", "README.md", "CHANGELOG.md", "LICENSE"]
 

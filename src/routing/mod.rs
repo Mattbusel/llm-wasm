@@ -35,9 +35,7 @@ impl RoutingCondition {
         match self {
             RoutingCondition::Always => true,
             RoutingCondition::MessageCountExceeds(n) => request.messages.len() > *n,
-            RoutingCondition::ModelNameContains(substr) => {
-                request.model.contains(substr.as_str())
-            }
+            RoutingCondition::ModelNameContains(substr) => request.model.contains(substr.as_str()),
             RoutingCondition::MaxTokensBelow(threshold) => {
                 request.max_tokens.is_some_and(|t| t < *threshold)
             }
@@ -57,7 +55,10 @@ pub struct RoutingRule {
 impl RoutingRule {
     /// Construct a new rule.
     pub fn new(condition: RoutingCondition, target_model: impl Into<String>) -> Self {
-        Self { condition, target_model: target_model.into() }
+        Self {
+            condition,
+            target_model: target_model.into(),
+        }
     }
 }
 
@@ -81,7 +82,10 @@ pub struct Router {
 impl Router {
     /// Create a router with no rules and the given fallback model.
     pub fn new(fallback: impl Into<String>) -> Self {
-        Self { rules: Vec::new(), fallback: fallback.into() }
+        Self {
+            rules: Vec::new(),
+            fallback: fallback.into(),
+        }
     }
 
     /// Append a rule to the end of the evaluation list.
@@ -111,7 +115,12 @@ mod tests {
         let messages = (0..msg_count)
             .map(|_| ChatMessage::new(Role::User, "test"))
             .collect();
-        ChatRequest { model: model.into(), messages, max_tokens, temperature: None }
+        ChatRequest {
+            model: model.into(),
+            messages,
+            max_tokens,
+            temperature: None,
+        }
     }
 
     #[test]
